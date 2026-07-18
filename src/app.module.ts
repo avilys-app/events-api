@@ -1,9 +1,11 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { EventsController } from './events/events.controller';
-import { EventsService } from './events/events.service';
+import { EventsModule } from './events/events.module';
+import { UsersModule } from './users/users.module';
+import { AuthModule } from './auth/auth.module';
 import { Event } from './events/entity/event.entity';
+import { User } from './users/entity/user.entity';
 
 @Module({
   imports: [
@@ -19,15 +21,15 @@ import { Event } from './events/entity/event.entity';
         username: configService.get('DB_USERNAME'),
         password: configService.get('DB_PASSWORD') || '',
         database: configService.get('DB_NAME'),
-        entities: [Event],
+        entities: [Event, User],
         synchronize: configService.get('NODE_ENV') !== 'production',
         logging: configService.get('NODE_ENV') === 'development',
       }),
       inject: [ConfigService],
     }),
-    TypeOrmModule.forFeature([Event]),
+    EventsModule,
+    UsersModule,
+    AuthModule,
   ],
-  controllers: [EventsController],
-  providers: [EventsService],
 })
 export class AppModule {}

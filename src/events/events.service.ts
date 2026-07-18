@@ -15,12 +15,23 @@ export class EventsService {
 
   async findAll(
     filters: EventFiltersDto = {},
+    restrictToIds?: number[],
   ): Promise<PaginatedEventResponse> {
     const page = filters.page || 1;
     const pageSize = filters.pageSize || 10;
     const skip = (page - 1) * pageSize;
 
+    // When restricting to a specific set of ids (e.g. a user's favorites),
+    // an empty set can never match, so short-circuit with an empty page.
+    if (restrictToIds && restrictToIds.length === 0) {
+      return { data: [], page, pageSize, total: 0 };
+    }
+
     const query = this.eventsRepository.createQueryBuilder('event');
+
+    if (restrictToIds) {
+      query.andWhere('event.id IN (:...ids)', { ids: restrictToIds });
+    }
 
     if (filters.category) {
       query.andWhere('event.category = :category', {
