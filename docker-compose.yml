@@ -1,0 +1,71 @@
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-events}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Run with: docker compose run --rm migrate
+  # This applies the Alembic schema to `db` after Postgres is healthy.
+  migrate:
+    image: ghcr.io/astral-sh/uv:python3.14-bookworm-slim
+    working_dir: /app
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: ${DB_NAME:-events}
+      JWT_SECRET: ${JWT_SECRET:-local-development-only}
+      UV_PROJECT_ENVIRONMENT: /opt/venv
+      UV_CACHE_DIR: /uv-cache
+    volumes:
+      - .:/app:ro
+      - python-env:/opt/venv
+      - uv-cache:/uv-cache
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["uv", "run", "--frozen", "alembic", "upgrade", "head"]
+    restart: "no"
+
+  # Run with: docker compose run --rm fixtures
+  # Inserts/updates only the synthetic records owned by fixtures/development.sql.
+  fixtures:
+    image: postgres:17
+    environment:
+      PGPASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - ./fixtures/development.sql:/fixtures/development.sql:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    command:
+      - psql
+      - --host=db
+      - --username=${DB_USERNAME:-postgres}
+      - --dbname=${DB_NAME:-events}
+      - --set=ON_ERROR_STOP=1
+      - --file=/fixtures/development.sql
+    restart: "no"
+
+volumes:
+  python-env:
+  uv-cache:
