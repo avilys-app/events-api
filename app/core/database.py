@@ -15,6 +15,15 @@ class Base(DeclarativeBase):
     """Declarative base for all ORM models."""
 
 
+def supabase_pooler_connect_args() -> dict[str, Any]:
+    """Return asyncpg options compatible with transaction-mode PgBouncer."""
+    return {
+        "statement_cache_size": 0,
+        "prepared_statement_cache_size": 0,
+        "prepared_statement_name_func": lambda: f"__asyncpg_{uuid4()}__",
+    }
+
+
 _settings = get_settings()
 
 engine_options: dict[str, Any] = {
@@ -30,11 +39,7 @@ if _settings.uses_supabase_pooler:
     engine_options.update(
         poolclass=NullPool,
         pool_pre_ping=False,
-        connect_args={
-            "statement_cache_size": 0,
-            "prepared_statement_cache_size": 0,
-            "prepared_statement_name_func": lambda: f"__asyncpg_{uuid4()}__",
-        },
+        connect_args=supabase_pooler_connect_args(),
     )
 
 engine = create_async_engine(
