@@ -18,7 +18,9 @@ uv sync
 cp .env.example .env
 ```
 
-Set `JWT_SECRET` in `.env`, then start PostgreSQL and initialise it:
+Set `JWT_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM`, and `EMAIL_CONFIRMATION_URL`
+in `.env`, then start PostgreSQL and initialise it. `EMAIL_FROM` must use a
+domain verified in Resend.
 
 ```bash
 docker compose up -d db

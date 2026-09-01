@@ -204,13 +204,14 @@ VALUES
   );
 
 INSERT INTO users (
-  email, password_hash, first_name, last_name, favorite_event_ids
+  email, password_hash, first_name, last_name, email_verified_at, favorite_event_ids
 )
 VALUES (
   'demo@avilys.example.com',
   '$2b$10$ku72VnKP/JOk.qMB1Muu7.h7CxoUo2KsdBX033WKu1zAne8WBbyjy',
   'Demo',
   'User',
+  CURRENT_TIMESTAMP,
   ARRAY(
     SELECT id
     FROM events

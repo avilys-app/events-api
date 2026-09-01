@@ -2,11 +2,13 @@
 
 from datetime import datetime
 
-from pydantic import EmailStr, Field
+from pydantic import EmailStr, Field, field_validator
 
 from app.core.schemas import APIModel
 
 MIN_PASSWORD_LENGTH = 8
+DEFAULT_LOCALE = "en"
+SUPPORTED_LOCALES = frozenset({"en", "lt"})
 
 
 class RegisterRequest(APIModel):
@@ -16,6 +18,17 @@ class RegisterRequest(APIModel):
     password: str = Field(min_length=MIN_PASSWORD_LENGTH)
     first_name: str = Field(min_length=1)
     last_name: str = Field(min_length=1)
+    locale: str = Field(default=DEFAULT_LOCALE, examples=["en", "lt"])
+
+    @field_validator("locale", mode="before")
+    @classmethod
+    def normalize_locale(cls, value: object) -> str:
+        """Use English when the client omits or sends an unsupported locale."""
+        if isinstance(value, str):
+            normalized = value.strip().casefold()
+            if normalized in SUPPORTED_LOCALES:
+                return normalized
+        return DEFAULT_LOCALE
 
 
 class LoginRequest(APIModel):
@@ -23,6 +36,24 @@ class LoginRequest(APIModel):
 
     email: EmailStr = Field(examples=["user@example.com"])
     password: str
+
+
+class ConfirmEmailRequest(APIModel):
+    """Opaque token received through the confirmation email."""
+
+    token: str = Field(min_length=1)
+
+
+class ResendConfirmationRequest(APIModel):
+    """Address that should receive a replacement confirmation email."""
+
+    email: EmailStr = Field(examples=["user@example.com"])
+
+
+class MessageResponse(APIModel):
+    """A successful operation represented by a user-facing message."""
+
+    message: str
 
 
 class UserResponse(APIModel):
