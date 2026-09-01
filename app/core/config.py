@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     jwt_secret: SecretStr
     jwt_expires_in: str = Field(default="7d", pattern=r"^\d+[dhms]$")
 
+    resend_api_key: SecretStr = SecretStr("")
+    email_from: str = "Events <onboarding@resend.dev>"
+    email_confirmation_url: str = "http://localhost:3000/confirm-email"
+    email_confirmation_expires_in: str = Field(default="24h", pattern=r"^\d+[dhms]$")
+    email_resend_cooldown: str = Field(default="60s", pattern=r"^\d+[dhms]$")
+
     @property
     def database_dsn(self) -> PostgresDsn:
         return PostgresDsn.build(

@@ -22,17 +22,18 @@ async def create(
     password_hash: str,
     first_name: str,
     last_name: str,
+    preferred_locale: str,
 ) -> User:
     user = User(
         email=email,
         password_hash=password_hash,
         first_name=first_name,
         last_name=last_name,
+        preferred_locale=preferred_locale,
         favorite_event_ids=[],
     )
     session.add(user)
-    await session.commit()
-    await session.refresh(user)
+    await session.flush()
     return user
 
 

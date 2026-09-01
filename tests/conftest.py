@@ -14,10 +14,13 @@ import pytest
 from app.core.database import Base, get_db_session
 from app.core.security import hash_password
 from app.events.models import Event
+from app.mailer.dependencies import get_email_sender
 from app.main import create_app
 from app.users.models import User
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from tests.fakes import RecordingEmailSender
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
@@ -65,9 +68,17 @@ async def clean_tables(session: AsyncSession) -> AsyncIterator[None]:
 
 
 @pytest.fixture
-async def client(session: AsyncSession) -> AsyncIterator[AsyncClient]:
+def email_sender() -> RecordingEmailSender:
+    return RecordingEmailSender()
+
+
+@pytest.fixture
+async def client(
+    session: AsyncSession, email_sender: RecordingEmailSender
+) -> AsyncIterator[AsyncClient]:
     app = create_app()
     app.dependency_overrides[get_db_session] = lambda: session
+    app.dependency_overrides[get_email_sender] = lambda: email_sender
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as active:
@@ -83,6 +94,7 @@ async def user(session: AsyncSession) -> User:
         password_hash=hash_password("correct-horse"),
         first_name="Some",
         last_name="One",
+        email_verified_at=NOW,
         favorite_event_ids=[],
     )
     session.add(record)
