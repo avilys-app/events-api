@@ -1,0 +1,63 @@
+"""Application settings, loaded from the environment."""
+
+from enum import StrEnum
+from functools import lru_cache
+
+from pydantic import Field, PostgresDsn, SecretStr
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Environment(StrEnum):
+    DEVELOPMENT = "development"
+    STAGING = "staging"
+    PRODUCTION = "production"
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    environment: Environment = Environment.DEVELOPMENT
+    port: int = 3000
+
+    db_host: str = "localhost"
+    db_port: int = 5432
+    db_username: str = "postgres"
+    db_password: SecretStr = SecretStr("")
+    db_name: str = "events"
+
+    jwt_secret: SecretStr
+    jwt_expires_in: str = Field(default="7d", pattern=r"^\d+[dhms]$")
+
+    @property
+    def database_dsn(self) -> PostgresDsn:
+        return PostgresDsn.build(
+            scheme="postgresql+asyncpg",
+            username=self.db_username,
+            password=self.db_password.get_secret_value() or None,
+            host=self.db_host,
+            port=self.db_port,
+            path=self.db_name,
+        )
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment is Environment.PRODUCTION
+
+    @property
+    def echo_sql(self) -> bool:
+        return self.environment is Environment.DEVELOPMENT
+
+    @property
+    def uses_supabase_pooler(self) -> bool:
+        """Whether the database host is Supabase's PgBouncer/Supavisor endpoint."""
+        return self.db_host.casefold().endswith(".pooler.supabase.com")
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Cached so the environment is read once per process."""
+    return Settings()
