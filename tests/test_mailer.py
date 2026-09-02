@@ -1,6 +1,7 @@
 """Provider adapter behavior without external network calls."""
 
 import json
+from collections.abc import Callable
 
 import httpx
 import pytest
@@ -14,6 +15,10 @@ MESSAGE = EmailMessage(
     html="<p>Confirmation HTML</p>",
     idempotency_key="confirmation/1",
 )
+
+
+async def no_sleep(_: float) -> None:
+    """Skip retry delays in unit tests."""
 
 
 async def test_resend_adapter_maps_provider_independent_message() -> None:
@@ -40,9 +45,199 @@ async def test_resend_adapter_maps_provider_independent_message() -> None:
 
 
 async def test_resend_adapter_wraps_provider_errors() -> None:
-    transport = httpx.MockTransport(lambda _: httpx.Response(503))
+    attempts = 0
+
+    def handle(_: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(503, json={"name": "service_unavailable"})
+
+    transport = httpx.MockTransport(handle)
     async with httpx.AsyncClient(transport=transport) as client:
-        sender = ResendEmailSender(api_key="secret-key", from_address="sender", client=client)
+        sender = ResendEmailSender(
+            api_key="secret-key",
+            from_address="sender",
+            client=client,
+            sleep=no_sleep,
+            jitter=lambda: 0.0,
+        )
 
         with pytest.raises(EmailDeliveryError):
             await sender.send(MESSAGE)
+
+    assert attempts == 3
+
+
+@pytest.mark.parametrize(
+    ("failures", "make_response"),
+    [
+        (
+            2,
+            lambda request: httpx.Response(
+                503,
+                request=request,
+                json={"name": "service_unavailable"},
+            ),
+        ),
+        (
+            1,
+            lambda request: httpx.Response(
+                409,
+                request=request,
+                json={"name": "concurrent_idempotent_requests"},
+            ),
+        ),
+    ],
+)
+async def test_resend_adapter_retries_transient_responses(
+    failures: int,
+    make_response: Callable[[httpx.Request], httpx.Response],
+) -> None:
+    attempts = 0
+    idempotency_keys: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        idempotency_keys.append(request.headers["Idempotency-Key"])
+        if attempts <= failures:
+            return make_response(request)
+        return httpx.Response(200, json={"id": "email-id"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        sender = ResendEmailSender(
+            api_key="secret-key",
+            from_address="sender",
+            client=client,
+            sleep=no_sleep,
+            jitter=lambda: 0.0,
+        )
+        await sender.send(MESSAGE)
+
+    assert attempts == failures + 1
+    assert idempotency_keys == ["confirmation/1"] * attempts
+
+
+async def test_resend_adapter_retries_transport_errors() -> None:
+    attempts = 0
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ConnectError("connection failed", request=request)
+        return httpx.Response(200, json={"id": "email-id"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        sender = ResendEmailSender(
+            api_key="secret-key",
+            from_address="sender",
+            client=client,
+            sleep=no_sleep,
+            jitter=lambda: 0.0,
+        )
+        await sender.send(MESSAGE)
+
+    assert attempts == 2
+
+
+async def test_resend_adapter_obeys_rate_limit_retry_after() -> None:
+    attempts = 0
+    delays: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(
+                429,
+                request=request,
+                headers={"retry-after": "2"},
+                json={"name": "rate_limit_exceeded"},
+            )
+        return httpx.Response(200, json={"id": "email-id"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        sender = ResendEmailSender(
+            api_key="secret-key",
+            from_address="sender",
+            client=client,
+            sleep=record_sleep,
+        )
+        await sender.send(MESSAGE)
+
+    assert attempts == 2
+    assert delays == [2.0]
+
+
+@pytest.mark.parametrize(
+    ("status_code", "error_code"),
+    [
+        (401, "missing_api_key"),
+        (422, "validation_error"),
+        (409, "invalid_idempotent_request"),
+        (429, "daily_quota_exceeded"),
+        (429, "monthly_quota_exceeded"),
+    ],
+)
+async def test_resend_adapter_does_not_retry_permanent_errors(
+    status_code: int,
+    error_code: str,
+) -> None:
+    attempts = 0
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(
+            status_code,
+            request=request,
+            json={"name": error_code},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        sender = ResendEmailSender(
+            api_key="secret-key",
+            from_address="sender",
+            client=client,
+            sleep=no_sleep,
+        )
+
+        with pytest.raises(EmailDeliveryError):
+            await sender.send(MESSAGE)
+
+    assert attempts == 1
+
+
+async def test_resend_adapter_generates_stable_idempotency_key_for_retries() -> None:
+    attempts = 0
+    idempotency_keys: list[str] = []
+    message = EmailMessage(
+        to="user@example.com",
+        subject="Subject",
+        text="Text",
+        html="<p>HTML</p>",
+    )
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        idempotency_keys.append(request.headers["Idempotency-Key"])
+        return httpx.Response(503 if attempts == 1 else 200, request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        sender = ResendEmailSender(
+            api_key="secret-key",
+            from_address="sender",
+            client=client,
+            sleep=no_sleep,
+            jitter=lambda: 0.0,
+        )
+        await sender.send(message)
+
+    assert attempts == 2
+    assert len(set(idempotency_keys)) == 1
+    assert idempotency_keys[0].startswith("email/")
