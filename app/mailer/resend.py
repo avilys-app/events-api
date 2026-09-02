@@ -46,6 +46,9 @@ class ResendEmailSender:
 
     async def send(self, message: EmailMessage) -> None:
         if not self._api_key:
+            logger.error(
+                "Resend email request failed: configuration_error=missing_api_key"
+            )
             raise EmailDeliveryError("RESEND_API_KEY is not configured")
 
         idempotency_key = message.idempotency_key or f"email/{uuid4()}"
@@ -85,13 +88,29 @@ class ResendEmailSender:
                     headers=headers,
                     json=payload,
                 )
-            except httpx.TransportError:
+            except httpx.TransportError as exc:
                 if attempt == MAX_ATTEMPTS - 1:
+                    logger.error(
+                        "Resend email request failed: transport_error=%s attempt=%s/%s",
+                        type(exc).__name__,
+                        attempt + 1,
+                        MAX_ATTEMPTS,
+                    )
                     raise
             else:
                 if response.is_success:
                     return
-                if not self._is_retryable_response(response) or attempt == MAX_ATTEMPTS - 1:
+                retryable = self._is_retryable_response(response)
+                if not retryable or attempt == MAX_ATTEMPTS - 1:
+                    logger.error(
+                        "Resend email request failed: status=%s code=%s "
+                        "attempt=%s/%s retryable=%s",
+                        response.status_code,
+                        self._error_code(response) or "unknown",
+                        attempt + 1,
+                        MAX_ATTEMPTS,
+                        retryable,
+                    )
                     response.raise_for_status()
 
             delay = self._retry_delay(attempt, response)
