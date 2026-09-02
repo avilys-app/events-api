@@ -44,7 +44,9 @@ async def test_resend_adapter_maps_provider_independent_message() -> None:
         await sender.send(MESSAGE)
 
 
-async def test_resend_adapter_wraps_provider_errors() -> None:
+async def test_resend_adapter_wraps_provider_errors(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     attempts = 0
 
     def handle(_: httpx.Request) -> httpx.Response:
@@ -66,6 +68,10 @@ async def test_resend_adapter_wraps_provider_errors() -> None:
             await sender.send(MESSAGE)
 
     assert attempts == 3
+    assert (
+        "Resend email request failed: status=503 code=service_unavailable "
+        "attempt=3/3 retryable=True"
+    ) in caplog.messages
 
 
 @pytest.mark.parametrize(
@@ -141,6 +147,30 @@ async def test_resend_adapter_retries_transport_errors() -> None:
     assert attempts == 2
 
 
+async def test_resend_adapter_logs_exhausted_transport_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("connection timed out", request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        sender = ResendEmailSender(
+            api_key="secret-key",
+            from_address="sender",
+            client=client,
+            sleep=no_sleep,
+            jitter=lambda: 0.0,
+        )
+
+        with pytest.raises(EmailDeliveryError):
+            await sender.send(MESSAGE)
+
+    assert (
+        "Resend email request failed: transport_error=ConnectTimeout attempt=3/3"
+        in caplog.messages
+    )
+
+
 async def test_resend_adapter_obeys_rate_limit_retry_after() -> None:
     attempts = 0
     delays: list[float] = []
@@ -186,6 +216,7 @@ async def test_resend_adapter_obeys_rate_limit_retry_after() -> None:
 async def test_resend_adapter_does_not_retry_permanent_errors(
     status_code: int,
     error_code: str,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     attempts = 0
 
@@ -210,6 +241,28 @@ async def test_resend_adapter_does_not_retry_permanent_errors(
             await sender.send(MESSAGE)
 
     assert attempts == 1
+    assert (
+        f"Resend email request failed: status={status_code} code={error_code} "
+        "attempt=1/3 retryable=False"
+    ) in caplog.messages
+    assert "secret-key" not in caplog.text
+    assert MESSAGE.to not in caplog.text
+    assert MESSAGE.text not in caplog.text
+
+
+async def test_resend_adapter_logs_missing_api_key(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sender = ResendEmailSender(api_key="", from_address="sender")
+
+    with pytest.raises(EmailDeliveryError):
+        await sender.send(MESSAGE)
+
+    assert (
+        "Resend email request failed: configuration_error=missing_api_key"
+        in caplog.messages
+    )
+    assert MESSAGE.to not in caplog.text
 
 
 async def test_resend_adapter_generates_stable_idempotency_key_for_retries() -> None:
