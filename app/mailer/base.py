@@ -12,6 +12,7 @@ class EmailMessage:
     subject: str
     text: str
     html: str
+    reply_to: str | None = None
     idempotency_key: str | None = None
 
 

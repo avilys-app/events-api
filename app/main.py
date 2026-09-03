@@ -15,6 +15,7 @@ from app.core.security import parse_duration
 from app.events.router import router as events_router
 from app.mailer.dependencies import create_email_sender
 from app.mailer.outbox import run_email_worker
+from app.reports.router import router as reports_router
 from app.users.router import router as users_router
 
 
@@ -75,6 +76,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(auth_router)
     app.include_router(events_router)
+    app.include_router(reports_router)
     app.include_router(users_router)
 
     return app

@@ -24,9 +24,9 @@ class ClaimedEmailJob:
 async def enqueue(
     session: AsyncSession,
     *,
-    confirmation_token_id: int,
     message: EmailMessage,
     now: datetime,
+    confirmation_token_id: int | None = None,
 ) -> EmailOutboxJob:
     if message.idempotency_key is None:
         raise ValueError("outbox messages require an idempotency key")
@@ -34,6 +34,7 @@ async def enqueue(
     job = EmailOutboxJob(
         confirmation_token_id=confirmation_token_id,
         to_address=message.to,
+        reply_to_address=message.reply_to,
         subject=message.subject,
         text_body=message.text,
         html_body=message.html,
@@ -79,6 +80,7 @@ async def claim_next(
         lock_token=lock_token,
         message=EmailMessage(
             to=job.to_address,
+            reply_to=job.reply_to_address,
             subject=job.subject,
             text=job.text_body,
             html=job.html_body,
@@ -139,7 +141,7 @@ async def fail(
             lock_token=None,
             last_error_code=error_code,
             failed_at=failed_at,
-            # The one-time confirmation URL is no longer needed once retries stop.
+            # Message content is no longer needed once retries stop.
             text_body="",
             html_body="",
         )

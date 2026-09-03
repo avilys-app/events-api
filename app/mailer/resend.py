@@ -98,13 +98,15 @@ class ResendEmailSender:
         message: EmailMessage,
         headers: dict[str, str],
     ) -> None:
-        payload = {
+        payload: dict[str, object] = {
             "from": self._from_address,
             "to": [message.to],
             "subject": message.subject,
             "text": message.text,
             "html": message.html,
         }
+        if message.reply_to is not None:
+            payload["reply_to"] = message.reply_to
 
         for attempt in range(MAX_ATTEMPTS):
             response: httpx.Response | None = None

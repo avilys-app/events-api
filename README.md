@@ -18,9 +18,9 @@ uv sync
 cp .env.example .env
 ```
 
-Set `JWT_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM`, and `EMAIL_CONFIRMATION_URL`
-in `.env`, then start PostgreSQL and initialise it. `EMAIL_FROM` must use a
-domain verified in Resend.
+Set `JWT_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_CONFIRMATION_URL`, and
+`REPORT_TO_EMAIL` in `.env`, then start PostgreSQL and initialise it.
+`EMAIL_FROM` must use a domain verified in Resend.
 
 ```bash
 docker compose up -d db
@@ -38,6 +38,10 @@ The API process also runs a durable email-outbox worker. Registration queues
 confirmation email in PostgreSQL and returns immediately; the worker delivers
 queued messages and retries transient Resend failures automatically. Configure
 it with `EMAIL_OUTBOX_WORKER_ENABLED` and `EMAIL_OUTBOX_POLL_INTERVAL`.
+
+`POST /api/submit-report` accepts issue reports from the web and mobile apps
+and queues them for delivery to `REPORT_TO_EMAIL`. Both the legacy `issue`
+field and the preferred `message` field are accepted.
 
 The API runs at `http://localhost:3000`. Interactive documentation is available
 at `http://localhost:3000/api/docs`.
