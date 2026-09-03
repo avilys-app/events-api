@@ -18,7 +18,12 @@ from app.mailer.dependencies import get_email_sender
 from app.main import create_app
 from app.users.models import User
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from tests.fakes import RecordingEmailSender
 
@@ -31,7 +36,7 @@ NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC).replace(tzinfo=None)
 
 
 @pytest.fixture(scope="session")
-async def engine() -> AsyncIterator[object]:
+async def engine() -> AsyncIterator[AsyncEngine]:
     candidate = create_async_engine(TEST_DATABASE_URL)
     try:
         async with candidate.begin() as connection:
@@ -50,10 +55,16 @@ async def engine() -> AsyncIterator[object]:
     await candidate.dispose()
 
 
+@pytest.fixture(scope="session")
+def db_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+    return async_sessionmaker(engine, expire_on_commit=False)
+
+
 @pytest.fixture
-async def session(engine: object) -> AsyncIterator[AsyncSession]:
-    factory = async_sessionmaker(engine, expire_on_commit=False)  # type: ignore[arg-type]
-    async with factory() as active:
+async def session(
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> AsyncIterator[AsyncSession]:
+    async with db_session_factory() as active:
         yield active
         await active.rollback()
 

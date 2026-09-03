@@ -18,6 +18,19 @@ class EmailMessage:
 class EmailDeliveryError(Exception):
     """Raised when an email provider cannot accept a message."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        retryable: bool = True,
+        error_code: str | None = None,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+        self.error_code = error_code
+        self.status_code = status_code
+
 
 class EmailSender(Protocol):
     """Delivery boundary implemented by Resend or a future provider."""

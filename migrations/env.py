@@ -9,6 +9,7 @@ from app.core.database import Base, supabase_pooler_connect_args
 
 # Imported for the side effect of registering tables on Base.metadata.
 from app.events import models as _events  # noqa: F401
+from app.mailer import models as _mailer  # noqa: F401
 from app.users import models as _users  # noqa: F401
 from sqlalchemy import Connection, pool
 from sqlalchemy.ext.asyncio import async_engine_from_config

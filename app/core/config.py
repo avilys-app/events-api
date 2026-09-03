@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     email_confirmation_url: str = "http://localhost:3000/confirm-email"
     email_confirmation_expires_in: str = Field(default="24h", pattern=r"^\d+[dhms]$")
     email_resend_cooldown: str = Field(default="60s", pattern=r"^\d+[dhms]$")
+    email_outbox_worker_enabled: bool = True
+    email_outbox_poll_interval: str = Field(default="5s", pattern=r"^\d+[dhms]$")
 
     @property
     def database_dsn(self) -> PostgresDsn:

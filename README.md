@@ -34,6 +34,11 @@ Start the API:
 uv run python -m app.main
 ```
 
+The API process also runs a durable email-outbox worker. Registration queues
+confirmation email in PostgreSQL and returns immediately; the worker delivers
+queued messages and retries transient Resend failures automatically. Configure
+it with `EMAIL_OUTBOX_WORKER_ENABLED` and `EMAIL_OUTBOX_POLL_INTERVAL`.
+
 The API runs at `http://localhost:3000`. Interactive documentation is available
 at `http://localhost:3000/api/docs`.
 

@@ -64,10 +64,13 @@ async def test_resend_adapter_wraps_provider_errors(
             jitter=lambda: 0.0,
         )
 
-        with pytest.raises(EmailDeliveryError):
+        with pytest.raises(EmailDeliveryError) as raised:
             await sender.send(MESSAGE)
 
     assert attempts == 3
+    assert raised.value.retryable is True
+    assert raised.value.error_code == "service_unavailable"
+    assert raised.value.status_code == 503
     assert (
         "Resend email request failed: status=503 code=service_unavailable "
         "attempt=3/3 retryable=True"
@@ -162,13 +165,15 @@ async def test_resend_adapter_logs_exhausted_transport_error(
             jitter=lambda: 0.0,
         )
 
-        with pytest.raises(EmailDeliveryError):
+        with pytest.raises(EmailDeliveryError) as raised:
             await sender.send(MESSAGE)
 
     assert (
         "Resend email request failed: transport_error=ConnectTimeout attempt=3/3"
         in caplog.messages
     )
+    assert raised.value.retryable is True
+    assert raised.value.error_code == "ConnectTimeout"
 
 
 async def test_resend_adapter_obeys_rate_limit_retry_after() -> None:
@@ -237,10 +242,13 @@ async def test_resend_adapter_does_not_retry_permanent_errors(
             sleep=no_sleep,
         )
 
-        with pytest.raises(EmailDeliveryError):
+        with pytest.raises(EmailDeliveryError) as raised:
             await sender.send(MESSAGE)
 
     assert attempts == 1
+    assert raised.value.retryable is False
+    assert raised.value.error_code == error_code
+    assert raised.value.status_code == status_code
     assert (
         f"Resend email request failed: status={status_code} code={error_code} "
         "attempt=1/3 retryable=False"
@@ -255,9 +263,11 @@ async def test_resend_adapter_logs_missing_api_key(
 ) -> None:
     sender = ResendEmailSender(api_key="", from_address="sender")
 
-    with pytest.raises(EmailDeliveryError):
+    with pytest.raises(EmailDeliveryError) as raised:
         await sender.send(MESSAGE)
 
+    assert raised.value.retryable is False
+    assert raised.value.error_code == "missing_api_key"
     assert (
         "Resend email request failed: configuration_error=missing_api_key"
         in caplog.messages
