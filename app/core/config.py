@@ -3,7 +3,7 @@
 from enum import StrEnum
 from functools import lru_cache
 
-from pydantic import Field, PostgresDsn, SecretStr
+from pydantic import EmailStr, Field, PostgresDsn, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -39,6 +39,15 @@ class Settings(BaseSettings):
     email_resend_cooldown: str = Field(default="60s", pattern=r"^\d+[dhms]$")
     email_outbox_worker_enabled: bool = True
     email_outbox_poll_interval: str = Field(default="5s", pattern=r"^\d+[dhms]$")
+
+    report_to_email: EmailStr | None = None
+
+    @field_validator("report_to_email", mode="before")
+    @classmethod
+    def empty_report_email_is_missing(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     @property
     def database_dsn(self) -> PostgresDsn:

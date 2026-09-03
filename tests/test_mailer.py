@@ -10,6 +10,7 @@ from app.mailer.resend import RESEND_EMAILS_URL, ResendEmailSender
 
 MESSAGE = EmailMessage(
     to="user@example.com",
+    reply_to="reporter@example.com",
     subject="Confirm your email",
     text="Confirmation text",
     html="<p>Confirmation HTML</p>",
@@ -29,6 +30,7 @@ async def test_resend_adapter_maps_provider_independent_message() -> None:
         assert json.loads(request.content) == {
             "from": "Events <accounts@example.com>",
             "to": ["user@example.com"],
+            "reply_to": "reporter@example.com",
             "subject": "Confirm your email",
             "text": "Confirmation text",
             "html": "<p>Confirmation HTML</p>",
