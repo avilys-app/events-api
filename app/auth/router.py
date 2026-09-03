@@ -4,7 +4,6 @@ from fastapi import APIRouter, status
 
 from app.auth import service
 from app.core.dependencies import DbSession
-from app.mailer.dependencies import EmailSenderDependency
 from app.users.schemas import (
     AuthResponse,
     ConfirmEmailRequest,
@@ -23,15 +22,13 @@ router = APIRouter(prefix="/api/auth", tags=["Auth"])
     summary="Register a new user",
     responses={
         status.HTTP_409_CONFLICT: {"description": "Email already in use"},
-        status.HTTP_503_SERVICE_UNAVAILABLE: {"description": "Confirmation email unavailable"},
     },
 )
 async def register(
     payload: RegisterRequest,
     session: DbSession,
-    email_sender: EmailSenderDependency,
 ) -> MessageResponse:
-    return await service.register(session, payload, email_sender)
+    return await service.register(session, payload)
 
 
 @router.post(
@@ -52,9 +49,8 @@ async def confirm_email(payload: ConfirmEmailRequest, session: DbSession) -> Non
 async def resend_confirmation(
     payload: ResendConfirmationRequest,
     session: DbSession,
-    email_sender: EmailSenderDependency,
 ) -> MessageResponse:
-    return await service.resend_confirmation(session, payload.email, email_sender)
+    return await service.resend_confirmation(session, payload.email)
 
 
 @router.post(

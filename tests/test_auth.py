@@ -1,9 +1,11 @@
 """Registration, login, and token handling."""
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
+from app.auth.service import _confirmation_timestamp
 from app.core.security import TokenClaims, create_access_token
+from app.mailer.models import EmailOutboxJob
 from app.users.models import EmailConfirmationToken, User
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -20,12 +22,25 @@ REGISTRATION = {
 }
 
 
-def confirmation_token(email_sender: RecordingEmailSender, index: int = -1) -> str:
-    url = email_sender.messages[index].text.rsplit(" ", maxsplit=1)[-1]
+def test_confirmation_timestamp_uses_locale_time_zone() -> None:
+    requested_at = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
+
+    assert _confirmation_timestamp(requested_at, "en") == "2026-06-01 12:00 UTC"
+    assert _confirmation_timestamp(requested_at, "lt") == "2026-06-01 15:00 EEST"
+
+
+def confirmation_token(text: str) -> str:
+    url = next(line for line in text.splitlines() if "token=" in line)
     return parse_qs(urlsplit(url).query)["token"][0]
 
 
-async def test_register_creates_unverified_user_and_sends_confirmation(
+async def queued_email(session: AsyncSession) -> EmailOutboxJob:
+    job = await session.scalar(select(EmailOutboxJob))
+    assert job is not None
+    return job
+
+
+async def test_register_creates_unverified_user_and_queues_confirmation(
     client: AsyncClient,
     session: AsyncSession,
     email_sender: RecordingEmailSender,
@@ -40,10 +55,13 @@ async def test_register_creates_unverified_user_and_sends_confirmation(
     assert user is not None
     assert user.email_verified_at is None
     assert user.preferred_locale == "en"
-    assert len(email_sender.messages) == 1
-    assert email_sender.messages[0].to == REGISTRATION["email"]
-    assert email_sender.messages[0].subject == "Confirm your email address"
-    assert confirmation_token(email_sender)
+    assert email_sender.messages == []
+    message = await queued_email(session)
+    assert message.to_address == REGISTRATION["email"]
+    assert message.subject == "Confirm your email address"
+    assert "Link requested at:" in message.text_body
+    assert "Link requested at:" in message.html_body
+    assert confirmation_token(message.text_body)
 
 
 async def test_register_sends_lithuanian_confirmation_email(
@@ -59,10 +77,12 @@ async def test_register_sends_lithuanian_confirmation_email(
     user = await session.scalar(select(User).where(User.email == REGISTRATION["email"]))
     assert user is not None
     assert user.preferred_locale == "lt"
-    message = email_sender.messages[0]
+    message = await queued_email(session)
     assert message.subject == "Patvirtinkite el. pašto adresą"
-    assert "Patvirtinkite savo el. pašto adresą" in message.text
-    assert "Patvirtinti el. pašto adresą" in message.html
+    assert "Patvirtinkite savo el. pašto adresą" in message.text_body
+    assert "Nuorodos užklausa pateikta:" in message.text_body
+    assert "Patvirtinti el. pašto adresą" in message.html_body
+    assert "Nuorodos užklausa pateikta:" in message.html_body
 
 
 async def test_register_falls_back_to_english_for_unsupported_locale(
@@ -78,7 +98,7 @@ async def test_register_falls_back_to_english_for_unsupported_locale(
     user = await session.scalar(select(User).where(User.email == REGISTRATION["email"]))
     assert user is not None
     assert user.preferred_locale == "en"
-    assert email_sender.messages[0].subject == "Confirm your email address"
+    assert (await queued_email(session)).subject == "Confirm your email address"
 
 
 async def test_register_rejects_duplicate_email(client: AsyncClient) -> None:
@@ -102,7 +122,7 @@ async def test_register_rejects_short_password(client: AsyncClient) -> None:
     assert isinstance(body["message"], list)
 
 
-async def test_register_keeps_pending_account_when_delivery_fails(
+async def test_register_does_not_call_email_provider_during_request(
     client: AsyncClient,
     session: AsyncSession,
     email_sender: RecordingEmailSender,
@@ -111,8 +131,10 @@ async def test_register_keeps_pending_account_when_delivery_fails(
 
     response = await client.post("/api/auth/register", json=REGISTRATION)
 
-    assert response.status_code == 503
+    assert response.status_code == 201
     assert await session.scalar(select(User).where(User.email == REGISTRATION["email"]))
+    assert await session.scalar(select(EmailOutboxJob))
+    assert email_sender.messages == []
 
 
 async def test_unconfirmed_user_cannot_login(
@@ -134,13 +156,13 @@ async def test_unconfirmed_user_cannot_login(
 
 
 async def test_confirm_email_enables_login(
-    client: AsyncClient, email_sender: RecordingEmailSender
+    client: AsyncClient,
+    session: AsyncSession,
 ) -> None:
     await client.post("/api/auth/register", json=REGISTRATION)
 
-    confirmation = await client.post(
-        "/api/auth/confirm-email", json={"token": confirmation_token(email_sender)}
-    )
+    token = confirmation_token((await queued_email(session)).text_body)
+    confirmation = await client.post("/api/auth/confirm-email", json={"token": token})
     login = await client.post(
         "/api/auth/login",
         json={"email": REGISTRATION["email"], "password": REGISTRATION["password"]},
@@ -152,10 +174,11 @@ async def test_confirm_email_enables_login(
 
 
 async def test_confirmation_token_is_single_use(
-    client: AsyncClient, email_sender: RecordingEmailSender
+    client: AsyncClient,
+    session: AsyncSession,
 ) -> None:
     await client.post("/api/auth/register", json=REGISTRATION)
-    token = confirmation_token(email_sender)
+    token = confirmation_token((await queued_email(session)).text_body)
     assert (await client.post("/api/auth/confirm-email", json={"token": token})).status_code == 204
 
     reused = await client.post("/api/auth/confirm-email", json={"token": token})
@@ -176,7 +199,8 @@ async def test_expired_confirmation_token_is_rejected(
     await session.commit()
 
     response = await client.post(
-        "/api/auth/confirm-email", json={"token": confirmation_token(email_sender)}
+        "/api/auth/confirm-email",
+        json={"token": confirmation_token((await queued_email(session)).text_body)},
     )
 
     assert response.status_code == 400
@@ -188,7 +212,7 @@ async def test_resend_replaces_previous_confirmation_token(
     email_sender: RecordingEmailSender,
 ) -> None:
     await client.post("/api/auth/register", json={**REGISTRATION, "locale": "lt"})
-    old_token = confirmation_token(email_sender)
+    old_token = confirmation_token((await queued_email(session)).text_body)
     stored = await session.scalar(select(EmailConfirmationToken))
     assert stored is not None
     stored.created_at = NOW - timedelta(minutes=2)
@@ -199,9 +223,10 @@ async def test_resend_replaces_previous_confirmation_token(
     )
 
     assert response.status_code == 202
-    assert len(email_sender.messages) == 2
-    assert email_sender.messages[1].subject == "Patvirtinkite el. pašto adresą"
-    assert confirmation_token(email_sender) != old_token
+    assert email_sender.messages == []
+    replacement = await queued_email(session)
+    assert replacement.subject == "Patvirtinkite el. pašto adresą"
+    assert confirmation_token(replacement.text_body) != old_token
     assert (
         await client.post("/api/auth/confirm-email", json={"token": old_token})
     ).status_code == 400

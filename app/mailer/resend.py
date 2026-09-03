@@ -49,7 +49,11 @@ class ResendEmailSender:
             logger.error(
                 "Resend email request failed: configuration_error=missing_api_key"
             )
-            raise EmailDeliveryError("RESEND_API_KEY is not configured")
+            raise EmailDeliveryError(
+                "RESEND_API_KEY is not configured",
+                retryable=False,
+                error_code="missing_api_key",
+            )
 
         idempotency_key = message.idempotency_key or f"email/{uuid4()}"
         headers = {
@@ -63,8 +67,30 @@ class ResendEmailSender:
             else:
                 async with httpx.AsyncClient(timeout=10) as client:
                     await self._send_with_retry(client, message, headers)
+        except httpx.HTTPStatusError as exc:
+            response = exc.response
+            raise EmailDeliveryError(
+                "Resend rejected the email",
+                retryable=self._is_retryable_response(response),
+                error_code=self._error_code(response),
+                status_code=response.status_code,
+            ) from exc
+        except httpx.TransportError as exc:
+            raise EmailDeliveryError(
+                "Could not reach Resend",
+                retryable=True,
+                error_code=type(exc).__name__,
+            ) from exc
         except httpx.HTTPError as exc:
-            raise EmailDeliveryError("Resend rejected the email") from exc
+            logger.error(
+                "Resend email request failed: client_error=%s",
+                type(exc).__name__,
+            )
+            raise EmailDeliveryError(
+                "Resend rejected the email",
+                retryable=True,
+                error_code=type(exc).__name__,
+            ) from exc
 
     async def _send_with_retry(
         self,

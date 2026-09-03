@@ -1,12 +1,12 @@
 """Registration, email confirmation, and login."""
 
 import hashlib
-import logging
 import secrets
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from html import escape
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
@@ -21,7 +21,8 @@ from app.core.security import (
     parse_duration,
     verify_password,
 )
-from app.mailer.base import EmailDeliveryError, EmailMessage, EmailSender
+from app.mailer import repository as email_outbox
+from app.mailer.base import EmailMessage
 from app.users import repository as users
 from app.users.models import User
 from app.users.schemas import AuthResponse, MessageResponse, RegisterRequest, UserResponse
@@ -32,15 +33,13 @@ REGISTRATION_MESSAGE = "Registration successful. Check your email to confirm you
 RESEND_MESSAGE = "If the account exists and is unconfirmed, a confirmation email has been sent."
 INVALID_CONFIRMATION_TOKEN = "Invalid or expired confirmation token"
 
-logger = logging.getLogger(__name__)
-
-
 @dataclass(frozen=True, slots=True)
 class ConfirmationEmailCopy:
     subject: str
     greeting: str
     instruction: str
     action: str
+    requested_at: str
 
 
 _ENGLISH_CONFIRMATION = ConfirmationEmailCopy(
@@ -48,6 +47,7 @@ _ENGLISH_CONFIRMATION = ConfirmationEmailCopy(
     greeting="Hi",
     instruction="Confirm your email address to finish creating your account.",
     action="Confirm email address",
+    requested_at="Link requested at",
 )
 _CONFIRMATION_EMAIL_COPY = {
     "en": _ENGLISH_CONFIRMATION,
@@ -58,8 +58,11 @@ _CONFIRMATION_EMAIL_COPY = {
             "Patvirtinkite savo el. pašto adresą, kad užbaigtumėte paskyros kūrimą."
         ),
         action="Patvirtinti el. pašto adresą",
+        requested_at="Nuorodos užklausa pateikta",
     ),
 }
+
+_LITHUANIAN_TIME_ZONE = ZoneInfo("Europe/Vilnius")
 
 
 def _utc_now() -> datetime:
@@ -77,29 +80,65 @@ def _confirmation_url(base_url: str, token: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
-async def _send_confirmation_email(
-    sender: EmailSender,
+def _confirmation_timestamp(requested_at: datetime, locale: str) -> str:
+    requested_at_utc = (
+        requested_at.replace(tzinfo=UTC)
+        if requested_at.tzinfo is None
+        else requested_at.astimezone(UTC)
+    )
+    time_zone = _LITHUANIAN_TIME_ZONE if locale == "lt" else UTC
+    return requested_at_utc.astimezone(time_zone).strftime("%Y-%m-%d %H:%M %Z")
+
+
+def _confirmation_email(
     *,
     user: User,
     raw_token: str,
     token_id: int,
-) -> None:
+    requested_at: datetime,
+) -> EmailMessage:
     url = _confirmation_url(get_settings().email_confirmation_url, raw_token)
     copy = _CONFIRMATION_EMAIL_COPY.get(user.preferred_locale, _ENGLISH_CONFIRMATION)
     safe_name = escape(user.first_name)
     safe_url = escape(url, quote=True)
-    await sender.send(
-        EmailMessage(
-            to=user.email,
-            subject=copy.subject,
-            text=f"{copy.greeting} {user.first_name},\n\n{copy.instruction}\n\n{url}",
-            html=(
-                f"<p>{copy.greeting} {safe_name},</p>"
-                f"<p>{copy.instruction}</p>"
-                f'<p><a href="{safe_url}">{copy.action}</a></p>'
-            ),
-            idempotency_key=f"email-confirmation/{token_id}",
-        )
+    requested_at_text = _confirmation_timestamp(requested_at, user.preferred_locale)
+    return EmailMessage(
+        to=user.email,
+        subject=copy.subject,
+        text=(
+            f"{copy.greeting} {user.first_name},\n\n"
+            f"{copy.instruction}\n\n"
+            f"{url}\n\n"
+            f"{copy.requested_at}: {requested_at_text}"
+        ),
+        html=(
+            f"<p>{copy.greeting} {safe_name},</p>"
+            f"<p>{copy.instruction}</p>"
+            f'<p><a href="{safe_url}">{copy.action}</a></p>'
+            f"<p>{copy.requested_at}: {requested_at_text}</p>"
+        ),
+        idempotency_key=f"email-confirmation/{token_id}",
+    )
+
+
+async def _enqueue_confirmation_email(
+    session: AsyncSession,
+    *,
+    user: User,
+    raw_token: str,
+    token_id: int,
+    now: datetime,
+) -> None:
+    await email_outbox.enqueue(
+        session,
+        confirmation_token_id=token_id,
+        message=_confirmation_email(
+            user=user,
+            raw_token=raw_token,
+            token_id=token_id,
+            requested_at=now,
+        ),
+        now=now,
     )
 
 
@@ -125,9 +164,7 @@ def issue_token(user: User) -> AuthResponse:
     )
 
 
-async def register(
-    session: AsyncSession, payload: RegisterRequest, sender: EmailSender
-) -> MessageResponse:
+async def register(session: AsyncSession, payload: RegisterRequest) -> MessageResponse:
     if await users.get_by_email(session, payload.email) is not None:
         raise _duplicate_email()
 
@@ -149,23 +186,17 @@ async def register(
             token_hash=_hash_confirmation_token(raw_token),
             expires_at=now + parse_duration(settings.email_confirmation_expires_in),
         )
+        await _enqueue_confirmation_email(
+            session,
+            user=user,
+            raw_token=raw_token,
+            token_id=confirmation.id,
+            now=now,
+        )
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
         raise _duplicate_email() from exc
-
-    try:
-        await _send_confirmation_email(
-            sender,
-            user=user,
-            raw_token=raw_token,
-            token_id=confirmation.id,
-        )
-    except EmailDeliveryError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Unable to send confirmation email",
-        ) from exc
 
     return MessageResponse(message=REGISTRATION_MESSAGE)
 
@@ -187,9 +218,7 @@ async def confirm_email(session: AsyncSession, raw_token: str) -> None:
     await session.commit()
 
 
-async def resend_confirmation(
-    session: AsyncSession, email: str, sender: EmailSender
-) -> MessageResponse:
+async def resend_confirmation(session: AsyncSession, email: str) -> MessageResponse:
     user = await users.get_by_email(session, email)
     if user is None or user.email_verified_at is not None:
         return MessageResponse(message=RESEND_MESSAGE)
@@ -208,18 +237,14 @@ async def resend_confirmation(
         token_hash=_hash_confirmation_token(raw_token),
         expires_at=now + parse_duration(settings.email_confirmation_expires_in),
     )
+    await _enqueue_confirmation_email(
+        session,
+        user=user,
+        raw_token=raw_token,
+        token_id=confirmation.id,
+        now=now,
+    )
     await session.commit()
-
-    try:
-        await _send_confirmation_email(
-            sender,
-            user=user,
-            raw_token=raw_token,
-            token_id=confirmation.id,
-        )
-    except EmailDeliveryError:
-        # The response deliberately stays generic to avoid revealing registered addresses.
-        logger.exception("Could not resend confirmation email for user %s", user.id)
 
     return MessageResponse(message=RESEND_MESSAGE)
 
