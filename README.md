@@ -46,6 +46,13 @@ field and the preferred `message` field are accepted.
 The API runs at `http://localhost:3000`. Interactive documentation is available
 at `http://localhost:3000/api/docs`.
 
+Login returns a short-lived access token and a rotating refresh token. Refresh
+sessions expire after 180 days of inactivity by default; configure the access
+and refresh lifetimes with `JWT_EXPIRES_IN` and `REFRESH_TOKEN_EXPIRES_IN`.
+Clients should use `POST /api/auth/refresh` to rotate credentials,
+`GET /api/auth/me` to restore the current user, and `POST /api/auth/logout` to
+revoke the current refresh session.
+
 The development database uses temporary storage. Running `docker compose down`
 removes its data, so rerun the migration and fixture commands after starting a
 fresh database.

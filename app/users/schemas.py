@@ -50,6 +50,12 @@ class ResendConfirmationRequest(APIModel):
     email: EmailStr = Field(examples=["user@example.com"])
 
 
+class RefreshTokenRequest(APIModel):
+    """An opaque refresh token used to rotate a login session."""
+
+    refresh_token: str = Field(min_length=32, repr=False)
+
+
 class MessageResponse(APIModel):
     """A successful operation represented by a user-facing message."""
 
@@ -68,7 +74,8 @@ class UserResponse(APIModel):
 
 
 class AuthResponse(APIModel):
-    """A freshly issued token and the user it belongs to."""
+    """Fresh access and refresh credentials and the user they belong to."""
 
     access_token: str
+    refresh_token: str
     user: UserResponse
