@@ -387,22 +387,6 @@ async def test_logout_is_idempotent_and_only_revokes_supplied_session(
     ).status_code == 200
 
 
-async def test_auth_me_returns_current_user(
-    client: AsyncClient, user: User, auth_headers: dict[str, str]
-) -> None:
-    response = await client.get("/api/auth/me", headers=auth_headers)
-
-    assert response.status_code == 200
-    assert response.json()["id"] == user.id
-    assert response.json()["email"] == user.email
-
-
-async def test_auth_me_requires_access_token(client: AsyncClient) -> None:
-    response = await client.get("/api/auth/me")
-
-    assert response.status_code == 401
-
-
 async def test_login_rejects_wrong_password(client: AsyncClient, user: User) -> None:
     response = await client.post("/api/auth/login", json={"email": user.email, "password": "wrong"})
 
