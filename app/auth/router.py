@@ -3,7 +3,7 @@
 from fastapi import APIRouter, status
 
 from app.auth import service
-from app.core.dependencies import CurrentUser, DbSession
+from app.core.dependencies import DbSession
 from app.users.schemas import (
     AuthResponse,
     ConfirmEmailRequest,
@@ -12,7 +12,6 @@ from app.users.schemas import (
     RefreshTokenRequest,
     RegisterRequest,
     ResendConfirmationRequest,
-    UserResponse,
 )
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
@@ -74,15 +73,6 @@ async def login(payload: LoginRequest, session: DbSession) -> AuthResponse:
 )
 async def refresh(payload: RefreshTokenRequest, session: DbSession) -> AuthResponse:
     return await service.refresh(session, payload.refresh_token)
-
-
-@router.get(
-    "/me",
-    summary="Get the currently authenticated user",
-    responses={status.HTTP_401_UNAUTHORIZED: {"description": "Missing or invalid access token"}},
-)
-async def me(user: CurrentUser) -> UserResponse:
-    return UserResponse.model_validate(user)
 
 
 @router.post(
