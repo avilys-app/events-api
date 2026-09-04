@@ -13,11 +13,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import repository as confirmations
+from app.auth import session_repository as refresh_sessions
 from app.core.config import get_settings
 from app.core.security import (
     TokenClaims,
     create_access_token,
+    create_refresh_token,
     hash_password,
+    hash_refresh_token,
     parse_duration,
     verify_password,
 )
@@ -32,6 +35,7 @@ UNCONFIRMED_EMAIL = "Email address has not been confirmed"
 REGISTRATION_MESSAGE = "Registration successful. Check your email to confirm your account."
 RESEND_MESSAGE = "If the account exists and is unconfirmed, a confirmation email has been sent."
 INVALID_CONFIRMATION_TOKEN = "Invalid or expired confirmation token"
+INVALID_REFRESH_TOKEN = "Invalid or expired refresh token"
 
 @dataclass(frozen=True, slots=True)
 class ConfirmationEmailCopy:
@@ -156,12 +160,32 @@ def _invalid_confirmation_token() -> HTTPException:
     )
 
 
-def issue_token(user: User) -> AuthResponse:
+def _auth_response(user: User, refresh_token: str) -> AuthResponse:
     claims = TokenClaims(sub=user.id, email=user.email)
     return AuthResponse(
         access_token=create_access_token(claims),
+        refresh_token=refresh_token,
         user=UserResponse.model_validate(user),
     )
+
+
+def _invalid_refresh_token() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=INVALID_REFRESH_TOKEN,
+    )
+
+
+async def _create_refresh_session(session: AsyncSession, user: User) -> str:
+    raw_token = create_refresh_token()
+    now = _utc_now()
+    await refresh_sessions.create(
+        session,
+        user_id=user.id,
+        token_hash=hash_refresh_token(raw_token),
+        expires_at=now + parse_duration(get_settings().refresh_token_expires_in),
+    )
+    return raw_token
 
 
 async def register(session: AsyncSession, payload: RegisterRequest) -> MessageResponse:
@@ -266,4 +290,37 @@ async def authenticate(session: AsyncSession, email: str, password: str) -> User
 
 
 async def login(session: AsyncSession, email: str, password: str) -> AuthResponse:
-    return issue_token(await authenticate(session, email, password))
+    user = await authenticate(session, email, password)
+    raw_refresh_token = await _create_refresh_session(session, user)
+    await session.commit()
+    return _auth_response(user, raw_refresh_token)
+
+
+async def refresh(session: AsyncSession, raw_token: str) -> AuthResponse:
+    """Rotate a valid refresh token and extend its inactivity window."""
+    stored = await refresh_sessions.get_for_update(session, hash_refresh_token(raw_token))
+    now = _utc_now()
+    if stored is None or stored.revoked_at is not None or stored.expires_at <= now:
+        raise _invalid_refresh_token()
+
+    user = await users.get(session, stored.user_id)
+    if user is None or user.email_verified_at is None:
+        raise _invalid_refresh_token()
+
+    replacement = create_refresh_token()
+    refresh_sessions.rotate(
+        stored,
+        token_hash=hash_refresh_token(replacement),
+        expires_at=now + parse_duration(get_settings().refresh_token_expires_in),
+        now=now,
+    )
+    await session.commit()
+    return _auth_response(user, replacement)
+
+
+async def logout(session: AsyncSession, raw_token: str) -> None:
+    """Revoke one refresh-token session, without revealing whether it existed."""
+    stored = await refresh_sessions.get_for_update(session, hash_refresh_token(raw_token))
+    if stored is not None and stored.revoked_at is None:
+        refresh_sessions.revoke(stored, now=_utc_now())
+    await session.commit()

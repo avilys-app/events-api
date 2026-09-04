@@ -3,8 +3,9 @@
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
+from app.auth.models import RefreshTokenSession
 from app.auth.service import _confirmation_timestamp
-from app.core.security import TokenClaims, create_access_token
+from app.core.security import TokenClaims, create_access_token, hash_refresh_token
 from app.mailer.models import EmailOutboxJob
 from app.users.models import EmailConfirmationToken, User
 from httpx import AsyncClient
@@ -253,6 +254,153 @@ async def test_login_succeeds_with_correct_password(client: AsyncClient, user: U
 
     assert response.status_code == 200
     assert response.json()["user"]["id"] == user.id
+    assert response.json()["accessToken"]
+    assert response.json()["refreshToken"]
+
+
+async def test_login_stores_only_refresh_token_hash(
+    client: AsyncClient, session: AsyncSession, user: User
+) -> None:
+    response = await client.post(
+        "/api/auth/login", json={"email": user.email, "password": "correct-horse"}
+    )
+    raw_token = response.json()["refreshToken"]
+    stored = await session.scalar(select(RefreshTokenSession))
+
+    assert stored is not None
+    assert stored.user_id == user.id
+    assert stored.token_hash == hash_refresh_token(raw_token)
+    assert stored.token_hash != raw_token
+    assert stored.revoked_at is None
+    assert stored.expires_at > datetime.now(UTC).replace(tzinfo=None) + timedelta(days=179)
+
+
+async def test_refresh_rotates_both_tokens_and_extends_sliding_expiry(
+    client: AsyncClient, session: AsyncSession, user: User
+) -> None:
+    login = await client.post(
+        "/api/auth/login", json={"email": user.email, "password": "correct-horse"}
+    )
+    old_access = login.json()["accessToken"]
+    old_refresh = login.json()["refreshToken"]
+    stored = await session.scalar(select(RefreshTokenSession))
+    assert stored is not None
+    stored.expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=1)
+    await session.commit()
+    previous_expiry = stored.expires_at
+
+    response = await client.post(
+        "/api/auth/refresh", json={"refreshToken": old_refresh}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["accessToken"] != old_access
+    assert response.json()["refreshToken"] != old_refresh
+    assert response.json()["user"]["id"] == user.id
+    await session.refresh(stored)
+    assert stored.token_hash == hash_refresh_token(response.json()["refreshToken"])
+    assert stored.expires_at > previous_expiry
+
+
+async def test_rotated_refresh_token_cannot_be_reused(
+    client: AsyncClient, user: User
+) -> None:
+    login = await client.post(
+        "/api/auth/login", json={"email": user.email, "password": "correct-horse"}
+    )
+    old_token = login.json()["refreshToken"]
+    rotated = await client.post(
+        "/api/auth/refresh", json={"refreshToken": old_token}
+    )
+
+    reused = await client.post(
+        "/api/auth/refresh", json={"refreshToken": old_token}
+    )
+    current = await client.post(
+        "/api/auth/refresh",
+        json={"refreshToken": rotated.json()["refreshToken"]},
+    )
+
+    assert reused.status_code == 401
+    assert reused.json()["message"] == "Invalid or expired refresh token"
+    assert current.status_code == 200
+
+
+async def test_expired_refresh_token_is_rejected(
+    client: AsyncClient, session: AsyncSession, user: User
+) -> None:
+    login = await client.post(
+        "/api/auth/login", json={"email": user.email, "password": "correct-horse"}
+    )
+    stored = await session.scalar(select(RefreshTokenSession))
+    assert stored is not None
+    stored.expires_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=1)
+    await session.commit()
+
+    response = await client.post(
+        "/api/auth/refresh", json={"refreshToken": login.json()["refreshToken"]}
+    )
+
+    assert response.status_code == 401
+    assert response.json()["message"] == "Invalid or expired refresh token"
+
+
+async def test_logout_revokes_current_refresh_session(
+    client: AsyncClient, session: AsyncSession, user: User
+) -> None:
+    login = await client.post(
+        "/api/auth/login", json={"email": user.email, "password": "correct-horse"}
+    )
+    token = login.json()["refreshToken"]
+
+    logout = await client.post("/api/auth/logout", json={"refreshToken": token})
+    refresh = await client.post("/api/auth/refresh", json={"refreshToken": token})
+    stored = await session.scalar(select(RefreshTokenSession))
+
+    assert logout.status_code == 204
+    assert logout.content == b""
+    assert refresh.status_code == 401
+    assert stored is not None
+    assert stored.revoked_at is not None
+
+
+async def test_logout_is_idempotent_and_only_revokes_supplied_session(
+    client: AsyncClient, user: User
+) -> None:
+    first = await client.post(
+        "/api/auth/login", json={"email": user.email, "password": "correct-horse"}
+    )
+    second = await client.post(
+        "/api/auth/login", json={"email": user.email, "password": "correct-horse"}
+    )
+    first_token = first.json()["refreshToken"]
+    second_token = second.json()["refreshToken"]
+
+    assert (
+        await client.post("/api/auth/logout", json={"refreshToken": first_token})
+    ).status_code == 204
+    assert (
+        await client.post("/api/auth/logout", json={"refreshToken": first_token})
+    ).status_code == 204
+    assert (
+        await client.post("/api/auth/refresh", json={"refreshToken": second_token})
+    ).status_code == 200
+
+
+async def test_auth_me_returns_current_user(
+    client: AsyncClient, user: User, auth_headers: dict[str, str]
+) -> None:
+    response = await client.get("/api/auth/me", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["id"] == user.id
+    assert response.json()["email"] == user.email
+
+
+async def test_auth_me_requires_access_token(client: AsyncClient) -> None:
+    response = await client.get("/api/auth/me")
+
+    assert response.status_code == 401
 
 
 async def test_login_rejects_wrong_password(client: AsyncClient, user: User) -> None:
