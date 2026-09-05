@@ -37,6 +37,11 @@ async def create(
     return user
 
 
+async def delete_user(session: AsyncSession, user: User) -> None:
+    await session.delete(user)
+    await session.commit()
+
+
 async def add_favorite(session: AsyncSession, user: User, event_id: int) -> User:
     """Append an event to the user's favorites, ignoring duplicates.
 

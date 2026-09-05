@@ -8,7 +8,8 @@ from app.core.dependencies import CurrentUser, DbSession
 from app.events import repository as events
 from app.events.schemas import EventFilters, EventResponse, PaginatedEventResponse
 from app.users import repository as users
-from app.users.schemas import UserResponse
+from app.users import service
+from app.users.schemas import DeleteAccountRequest, UserResponse
 
 router = APIRouter(
     prefix="/api/users",
@@ -22,6 +23,22 @@ EventId = Annotated[int, Path(alias="eventId", ge=1, description="Event ID")]
 @router.get("/profile", summary="Get the currently authenticated user")
 async def get_profile(user: CurrentUser) -> UserResponse:
     return UserResponse.model_validate(user)
+
+
+@router.delete(
+    "/profile",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Permanently delete the currently authenticated account",
+    responses={
+        status.HTTP_400_BAD_REQUEST: {"description": "Current password is incorrect"},
+    },
+)
+async def delete_profile(
+    payload: DeleteAccountRequest,
+    user: CurrentUser,
+    session: DbSession,
+) -> None:
+    await service.delete_account(session, user, payload.password)
 
 
 @router.get("/favorites", summary="List the current user's favorite events")

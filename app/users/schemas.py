@@ -76,6 +76,12 @@ class ChangePasswordRequest(APIModel):
     new_password: str = Field(min_length=MIN_PASSWORD_LENGTH, repr=False)
 
 
+class DeleteAccountRequest(APIModel):
+    """Password confirmation for permanent account deletion."""
+
+    password: str = Field(min_length=1, repr=False)
+
+
 class MessageResponse(APIModel):
     """A successful operation represented by a user-facing message."""
 
