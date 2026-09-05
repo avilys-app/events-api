@@ -61,6 +61,10 @@ use `POST /api/auth/change-password`. Resetting or changing a password revokes
 all of that user's refresh sessions, so clients should clear authentication and
 return to login.
 
+Authenticated users can permanently remove their account with
+`DELETE /api/users/profile` by supplying their current password. The user and
+all associated authentication tokens and sessions are deleted.
+
 The development database uses temporary storage. Running `docker compose down`
 removes its data, so rerun the migration and fixture commands after starting a
 fresh database.
