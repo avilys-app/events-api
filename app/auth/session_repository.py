@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.models import RefreshTokenSession
@@ -51,3 +51,20 @@ def rotate(
 def revoke(refresh_session: RefreshTokenSession, *, now: datetime) -> None:
     refresh_session.revoked_at = now
     refresh_session.updated_at = now
+
+
+async def revoke_for_user(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    now: datetime,
+) -> None:
+    """Revoke every active login session after a password change."""
+    await session.execute(
+        update(RefreshTokenSession)
+        .where(
+            RefreshTokenSession.user_id == user_id,
+            RefreshTokenSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=now, updated_at=now)
+    )

@@ -20,6 +20,12 @@ class EmailOutboxJob(Base):
         unique=True,
         index=True,
     )
+    password_reset_token_id: Mapped[int | None] = mapped_column(
+        ForeignKey("password_reset_tokens.id", ondelete="CASCADE"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
     to_address: Mapped[str] = mapped_column(Text)
     reply_to_address: Mapped[str | None] = mapped_column(Text, nullable=True)
     subject: Mapped[str] = mapped_column(Text)

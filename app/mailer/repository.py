@@ -27,12 +27,14 @@ async def enqueue(
     message: EmailMessage,
     now: datetime,
     confirmation_token_id: int | None = None,
+    password_reset_token_id: int | None = None,
 ) -> EmailOutboxJob:
     if message.idempotency_key is None:
         raise ValueError("outbox messages require an idempotency key")
 
     job = EmailOutboxJob(
         confirmation_token_id=confirmation_token_id,
+        password_reset_token_id=password_reset_token_id,
         to_address=message.to,
         reply_to_address=message.reply_to,
         subject=message.subject,

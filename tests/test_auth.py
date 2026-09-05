@@ -1,9 +1,10 @@
 """Registration, login, and token handling."""
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
-from app.auth.models import RefreshTokenSession
+from app.auth.models import PasswordResetToken, RefreshTokenSession
 from app.auth.service import _confirmation_timestamp
 from app.core.security import TokenClaims, create_access_token, hash_refresh_token
 from app.mailer.models import EmailOutboxJob
@@ -245,6 +246,289 @@ async def test_resend_does_not_reveal_account_status(
 
     assert unknown.status_code == verified.status_code == 202
     assert unknown.json() == verified.json()
+
+
+async def test_forgot_password_queues_reset_email_and_stores_only_token_hash(
+    client: AsyncClient,
+    session: AsyncSession,
+    user: User,
+) -> None:
+    response = await client.post(
+        "/api/auth/forgot-password", json={"email": user.email}
+    )
+
+    assert response.status_code == 202
+    assert response.json() == {
+        "message": "If the account exists, a password reset email has been sent."
+    }
+    stored = await session.scalar(select(PasswordResetToken))
+    message = await queued_email(session)
+    assert stored is not None
+    assert message.password_reset_token_id == stored.id
+    assert message.confirmation_token_id is None
+    assert message.subject == "Reset your password"
+    raw_token = confirmation_token(message.text_body)
+    assert stored.token_hash == hashlib.sha256(raw_token.encode()).hexdigest()
+    assert raw_token not in stored.token_hash
+
+
+async def test_forgot_password_uses_saved_lithuanian_locale(
+    client: AsyncClient,
+    session: AsyncSession,
+    user: User,
+) -> None:
+    user.preferred_locale = "lt"
+    await session.commit()
+
+    response = await client.post(
+        "/api/auth/forgot-password", json={"email": user.email}
+    )
+
+    assert response.status_code == 202
+    message = await queued_email(session)
+    assert message.subject == "Atkurkite savo slaptažodį"
+    assert "pasirinkite naują slaptažodį" in message.text_body
+    assert "Jei to neprašėte" in message.text_body
+    assert "Nuorodos užklausa pateikta:" in message.text_body
+
+
+async def test_forgot_password_does_not_reveal_account_or_confirmation_status(
+    client: AsyncClient,
+    session: AsyncSession,
+    user: User,
+) -> None:
+    unknown = await client.post(
+        "/api/auth/forgot-password", json={"email": "nobody@example.com"}
+    )
+    user.email_verified_at = None
+    await session.commit()
+    unconfirmed = await client.post(
+        "/api/auth/forgot-password", json={"email": user.email}
+    )
+
+    assert unknown.status_code == unconfirmed.status_code == 202
+    assert unknown.json() == unconfirmed.json()
+    assert await session.scalar(select(PasswordResetToken)) is None
+    assert await session.scalar(select(EmailOutboxJob)) is None
+
+
+async def test_forgot_password_observes_cooldown(
+    client: AsyncClient,
+    session: AsyncSession,
+    user: User,
+) -> None:
+    await client.post("/api/auth/forgot-password", json={"email": user.email})
+    original = await session.scalar(select(PasswordResetToken))
+    assert original is not None
+
+    response = await client.post(
+        "/api/auth/forgot-password", json={"email": user.email}
+    )
+
+    assert response.status_code == 202
+    assert (await session.scalars(select(PasswordResetToken))).all() == [original]
+    assert len((await session.scalars(select(EmailOutboxJob))).all()) == 1
+
+
+async def test_forgot_password_replaces_old_token_and_pending_email_after_cooldown(
+    client: AsyncClient,
+    session: AsyncSession,
+    user: User,
+) -> None:
+    await client.post("/api/auth/forgot-password", json={"email": user.email})
+    old_raw_token = confirmation_token((await queued_email(session)).text_body)
+    old = await session.scalar(select(PasswordResetToken))
+    assert old is not None
+    old.created_at = NOW - timedelta(minutes=2)
+    await session.commit()
+
+    await client.post("/api/auth/forgot-password", json={"email": user.email})
+
+    replacement = await session.scalar(select(PasswordResetToken))
+    jobs = (await session.scalars(select(EmailOutboxJob))).all()
+    assert replacement is not None
+    assert replacement.id != old.id
+    assert len(jobs) == 1
+    assert jobs[0].password_reset_token_id == replacement.id
+    rejected = await client.post(
+        "/api/auth/reset-password",
+        json={"token": old_raw_token, "newPassword": "new-password"},
+    )
+    assert rejected.status_code == 400
+
+
+async def test_reset_password_changes_password_consumes_token_and_revokes_sessions(
+    client: AsyncClient,
+    session: AsyncSession,
+    user: User,
+) -> None:
+    first_login = await client.post(
+        "/api/auth/login", json={"email": user.email, "password": "correct-horse"}
+    )
+    second_login = await client.post(
+        "/api/auth/login", json={"email": user.email, "password": "correct-horse"}
+    )
+    await client.post("/api/auth/forgot-password", json={"email": user.email})
+    raw_token = confirmation_token((await queued_email(session)).text_body)
+
+    response = await client.post(
+        "/api/auth/reset-password",
+        json={"token": raw_token, "newPassword": "brand-new-password"},
+    )
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert await session.scalar(select(PasswordResetToken)) is None
+    assert await session.scalar(select(EmailOutboxJob)) is None
+    refresh_sessions = (await session.scalars(select(RefreshTokenSession))).all()
+    assert len(refresh_sessions) == 2
+    assert all(item.revoked_at is not None for item in refresh_sessions)
+    assert (
+        await client.post(
+            "/api/auth/login",
+            json={"email": user.email, "password": "correct-horse"},
+        )
+    ).status_code == 401
+    assert (
+        await client.post(
+            "/api/auth/login",
+            json={"email": user.email, "password": "brand-new-password"},
+        )
+    ).status_code == 200
+    for login in (first_login, second_login):
+        assert (
+            await client.post(
+                "/api/auth/refresh",
+                json={"refreshToken": login.json()["refreshToken"]},
+            )
+        ).status_code == 401
+    assert (
+        await client.post(
+            "/api/auth/reset-password",
+            json={"token": raw_token, "newPassword": "another-password"},
+        )
+    ).status_code == 400
+
+
+async def test_expired_password_reset_token_is_rejected(
+    client: AsyncClient,
+    session: AsyncSession,
+    user: User,
+) -> None:
+    await client.post("/api/auth/forgot-password", json={"email": user.email})
+    raw_token = confirmation_token((await queued_email(session)).text_body)
+    stored = await session.scalar(select(PasswordResetToken))
+    assert stored is not None
+    stored.expires_at = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=1)
+    await session.commit()
+
+    response = await client.post(
+        "/api/auth/reset-password",
+        json={"token": raw_token, "newPassword": "brand-new-password"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["message"] == "Invalid or expired password reset token"
+    assert (
+        await client.post(
+            "/api/auth/login",
+            json={"email": user.email, "password": "correct-horse"},
+        )
+    ).status_code == 200
+
+
+async def test_reset_password_rejects_short_new_password(
+    client: AsyncClient,
+    session: AsyncSession,
+    user: User,
+) -> None:
+    await client.post("/api/auth/forgot-password", json={"email": user.email})
+    raw_token = confirmation_token((await queued_email(session)).text_body)
+
+    response = await client.post(
+        "/api/auth/reset-password",
+        json={"token": raw_token, "newPassword": "short"},
+    )
+
+    assert response.status_code == 400
+    assert await session.scalar(select(PasswordResetToken)) is not None
+
+
+async def test_change_password_requires_authentication(client: AsyncClient) -> None:
+    response = await client.post(
+        "/api/auth/change-password",
+        json={"currentPassword": "correct-horse", "newPassword": "brand-new-password"},
+    )
+
+    assert response.status_code == 401
+
+
+async def test_change_password_rejects_incorrect_current_password(
+    client: AsyncClient,
+    user: User,
+    auth_headers: dict[str, str],
+) -> None:
+    response = await client.post(
+        "/api/auth/change-password",
+        headers=auth_headers,
+        json={"currentPassword": "wrong-password", "newPassword": "brand-new-password"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["message"] == "Current password is incorrect"
+    assert (
+        await client.post(
+            "/api/auth/login", json={"email": user.email, "password": "correct-horse"}
+        )
+    ).status_code == 200
+
+
+async def test_change_password_rejects_current_password_as_replacement(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+) -> None:
+    response = await client.post(
+        "/api/auth/change-password",
+        headers=auth_headers,
+        json={"currentPassword": "correct-horse", "newPassword": "correct-horse"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["message"] == "New password must be different from the current password"
+
+
+async def test_change_password_updates_password_and_revokes_sessions_and_reset_token(
+    client: AsyncClient,
+    session: AsyncSession,
+    user: User,
+    auth_headers: dict[str, str],
+) -> None:
+    await client.post("/api/auth/forgot-password", json={"email": user.email})
+
+    response = await client.post(
+        "/api/auth/change-password",
+        headers=auth_headers,
+        json={"currentPassword": "correct-horse", "newPassword": "brand-new-password"},
+    )
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert await session.scalar(select(PasswordResetToken)) is None
+    assert await session.scalar(select(EmailOutboxJob)) is None
+    refresh_sessions = (await session.scalars(select(RefreshTokenSession))).all()
+    assert refresh_sessions
+    assert all(item.revoked_at is not None for item in refresh_sessions)
+    assert (
+        await client.post(
+            "/api/auth/login", json={"email": user.email, "password": "correct-horse"}
+        )
+    ).status_code == 401
+    assert (
+        await client.post(
+            "/api/auth/login",
+            json={"email": user.email, "password": "brand-new-password"},
+        )
+    ).status_code == 200
 
 
 async def test_login_succeeds_with_correct_password(client: AsyncClient, user: User) -> None:

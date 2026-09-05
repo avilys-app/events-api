@@ -18,8 +18,9 @@ uv sync
 cp .env.example .env
 ```
 
-Set `JWT_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_CONFIRMATION_URL`, and
-`REPORT_TO_EMAIL` in `.env`, then start PostgreSQL and initialise it.
+Set `JWT_SECRET`, `RESEND_API_KEY`, `EMAIL_FROM`, `EMAIL_CONFIRMATION_URL`,
+`PASSWORD_RESET_URL`, and `REPORT_TO_EMAIL` in `.env`, then start PostgreSQL
+and initialise it.
 `EMAIL_FROM` must use a domain verified in Resend.
 
 ```bash
@@ -52,6 +53,13 @@ and refresh lifetimes with `JWT_EXPIRES_IN` and `REFRESH_TOKEN_EXPIRES_IN`.
 Clients should use `POST /api/auth/refresh` to rotate credentials,
 `GET /api/users/profile` to restore the current user, and
 `POST /api/auth/logout` to revoke the current refresh session.
+
+Password recovery uses `POST /api/auth/forgot-password` and
+`POST /api/auth/reset-password`. Reset messages are queued through the same
+durable email outbox and link to `PASSWORD_RESET_URL`. Authenticated users can
+use `POST /api/auth/change-password`. Resetting or changing a password revokes
+all of that user's refresh sessions, so clients should clear authentication and
+return to login.
 
 The development database uses temporary storage. Running `docker compose down`
 removes its data, so rerun the migration and fixture commands after starting a
