@@ -3,15 +3,18 @@
 from fastapi import APIRouter, status
 
 from app.auth import service
-from app.core.dependencies import DbSession
+from app.core.dependencies import CurrentUser, DbSession
 from app.users.schemas import (
     AuthResponse,
+    ChangePasswordRequest,
     ConfirmEmailRequest,
+    ForgotPasswordRequest,
     LoginRequest,
     MessageResponse,
     RefreshTokenRequest,
     RegisterRequest,
     ResendConfirmationRequest,
+    ResetPasswordRequest,
 )
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
@@ -52,6 +55,50 @@ async def resend_confirmation(
     session: DbSession,
 ) -> MessageResponse:
     return await service.resend_confirmation(session, payload.email)
+
+
+@router.post(
+    "/forgot-password",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Send password-reset instructions",
+)
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    session: DbSession,
+) -> MessageResponse:
+    return await service.forgot_password(session, payload.email)
+
+
+@router.post(
+    "/reset-password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Set a new password using a reset token",
+    responses={status.HTTP_400_BAD_REQUEST: {"description": "Invalid or expired token"}},
+)
+async def reset_password(payload: ResetPasswordRequest, session: DbSession) -> None:
+    await service.reset_password(session, payload.token, payload.new_password)
+
+
+@router.post(
+    "/change-password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Change the current user's password",
+    responses={
+        status.HTTP_400_BAD_REQUEST: {"description": "Invalid current or new password"},
+        status.HTTP_401_UNAUTHORIZED: {"description": "Missing or invalid access token"},
+    },
+)
+async def change_password(
+    payload: ChangePasswordRequest,
+    session: DbSession,
+    user: CurrentUser,
+) -> None:
+    await service.change_password(
+        session,
+        user,
+        payload.current_password,
+        payload.new_password,
+    )
 
 
 @router.post(

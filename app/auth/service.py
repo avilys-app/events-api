@@ -12,6 +12,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import password_repository as password_resets
 from app.auth import repository as confirmations
 from app.auth import session_repository as refresh_sessions
 from app.core.config import get_settings
@@ -36,12 +37,26 @@ REGISTRATION_MESSAGE = "Registration successful. Check your email to confirm you
 RESEND_MESSAGE = "If the account exists and is unconfirmed, a confirmation email has been sent."
 INVALID_CONFIRMATION_TOKEN = "Invalid or expired confirmation token"
 INVALID_REFRESH_TOKEN = "Invalid or expired refresh token"
+INVALID_PASSWORD_RESET_TOKEN = "Invalid or expired password reset token"
+INVALID_CURRENT_PASSWORD = "Current password is incorrect"
+PASSWORD_REUSE = "New password must be different from the current password"
+PASSWORD_RESET_MESSAGE = "If the account exists, a password reset email has been sent."
 
 @dataclass(frozen=True, slots=True)
 class ConfirmationEmailCopy:
     subject: str
     greeting: str
     instruction: str
+    action: str
+    requested_at: str
+
+
+@dataclass(frozen=True, slots=True)
+class PasswordResetEmailCopy:
+    subject: str
+    greeting: str
+    instruction: str
+    ignore: str
     action: str
     requested_at: str
 
@@ -66,6 +81,26 @@ _CONFIRMATION_EMAIL_COPY = {
     ),
 }
 
+_ENGLISH_PASSWORD_RESET = PasswordResetEmailCopy(
+    subject="Reset your password",
+    greeting="Hi",
+    instruction="Use the link below to choose a new password.",
+    ignore="If you did not request this, you can ignore this email.",
+    action="Reset password",
+    requested_at="Link requested at",
+)
+_PASSWORD_RESET_EMAIL_COPY = {
+    "en": _ENGLISH_PASSWORD_RESET,
+    "lt": PasswordResetEmailCopy(
+        subject="Atkurkite savo slaptažodį",
+        greeting="Sveiki",
+        instruction="Paspauskite žemiau esančią nuorodą ir pasirinkite naują slaptažodį.",
+        ignore="Jei to neprašėte, galite nepaisyti šio laiško.",
+        action="Atkurti slaptažodį",
+        requested_at="Nuorodos užklausa pateikta",
+    ),
+}
+
 _LITHUANIAN_TIME_ZONE = ZoneInfo("Europe/Vilnius")
 
 
@@ -78,7 +113,7 @@ def _hash_confirmation_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def _confirmation_url(base_url: str, token: str) -> str:
+def _token_url(base_url: str, token: str) -> str:
     parts = urlsplit(base_url)
     query = [*parse_qsl(parts.query, keep_blank_values=True), ("token", token)]
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
@@ -101,7 +136,7 @@ def _confirmation_email(
     token_id: int,
     requested_at: datetime,
 ) -> EmailMessage:
-    url = _confirmation_url(get_settings().email_confirmation_url, raw_token)
+    url = _token_url(get_settings().email_confirmation_url, raw_token)
     copy = _CONFIRMATION_EMAIL_COPY.get(user.preferred_locale, _ENGLISH_CONFIRMATION)
     safe_name = escape(user.first_name)
     safe_url = escape(url, quote=True)
@@ -125,6 +160,41 @@ def _confirmation_email(
     )
 
 
+def _password_reset_email(
+    *,
+    user: User,
+    raw_token: str,
+    token_id: int,
+    requested_at: datetime,
+) -> EmailMessage:
+    url = _token_url(get_settings().password_reset_url, raw_token)
+    copy = _PASSWORD_RESET_EMAIL_COPY.get(
+        user.preferred_locale, _ENGLISH_PASSWORD_RESET
+    )
+    safe_name = escape(user.first_name)
+    safe_url = escape(url, quote=True)
+    requested_at_text = _confirmation_timestamp(requested_at, user.preferred_locale)
+    return EmailMessage(
+        to=user.email,
+        subject=copy.subject,
+        text=(
+            f"{copy.greeting} {user.first_name},\n\n"
+            f"{copy.instruction}\n\n"
+            f"{url}\n\n"
+            f"{copy.requested_at}: {requested_at_text}\n\n"
+            f"{copy.ignore}"
+        ),
+        html=(
+            f"<p>{copy.greeting} {safe_name},</p>"
+            f"<p>{copy.instruction}</p>"
+            f'<p><a href="{safe_url}">{copy.action}</a></p>'
+            f"<p>{copy.requested_at}: {requested_at_text}</p>"
+            f"<p>{copy.ignore}</p>"
+        ),
+        idempotency_key=f"password-reset/{token_id}",
+    )
+
+
 async def _enqueue_confirmation_email(
     session: AsyncSession,
     *,
@@ -137,6 +207,27 @@ async def _enqueue_confirmation_email(
         session,
         confirmation_token_id=token_id,
         message=_confirmation_email(
+            user=user,
+            raw_token=raw_token,
+            token_id=token_id,
+            requested_at=now,
+        ),
+        now=now,
+    )
+
+
+async def _enqueue_password_reset_email(
+    session: AsyncSession,
+    *,
+    user: User,
+    raw_token: str,
+    token_id: int,
+    now: datetime,
+) -> None:
+    await email_outbox.enqueue(
+        session,
+        password_reset_token_id=token_id,
+        message=_password_reset_email(
             user=user,
             raw_token=raw_token,
             token_id=token_id,
@@ -173,6 +264,13 @@ def _invalid_refresh_token() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail=INVALID_REFRESH_TOKEN,
+    )
+
+
+def _invalid_password_reset_token() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=INVALID_PASSWORD_RESET_TOKEN,
     )
 
 
@@ -271,6 +369,85 @@ async def resend_confirmation(session: AsyncSession, email: str) -> MessageRespo
     await session.commit()
 
     return MessageResponse(message=RESEND_MESSAGE)
+
+
+async def forgot_password(session: AsyncSession, email: str) -> MessageResponse:
+    """Queue reset instructions without revealing whether an account exists."""
+    user = await users.get_by_email(session, email)
+    if user is None or user.email_verified_at is None:
+        return MessageResponse(message=PASSWORD_RESET_MESSAGE)
+
+    settings = get_settings()
+    now = _utc_now()
+    existing = await password_resets.get_for_user(session, user.id)
+    cooldown = parse_duration(settings.password_reset_cooldown)
+    if existing is not None and existing.created_at + cooldown > now:
+        return MessageResponse(message=PASSWORD_RESET_MESSAGE)
+
+    raw_token = secrets.token_urlsafe(32)
+    reset_token = await password_resets.replace(
+        session,
+        user_id=user.id,
+        token_hash=_hash_confirmation_token(raw_token),
+        expires_at=now + parse_duration(settings.password_reset_expires_in),
+    )
+    await _enqueue_password_reset_email(
+        session,
+        user=user,
+        raw_token=raw_token,
+        token_id=reset_token.id,
+        now=now,
+    )
+    await session.commit()
+    return MessageResponse(message=PASSWORD_RESET_MESSAGE)
+
+
+async def reset_password(
+    session: AsyncSession,
+    raw_token: str,
+    new_password: str,
+) -> None:
+    """Consume a reset token, update the password, and revoke login sessions."""
+    reset_token = await password_resets.get_for_update(
+        session, _hash_confirmation_token(raw_token)
+    )
+    now = _utc_now()
+    if reset_token is None or reset_token.expires_at <= now:
+        raise _invalid_password_reset_token()
+
+    user = await users.get(session, reset_token.user_id)
+    if user is None:
+        raise _invalid_password_reset_token()
+
+    user.password_hash = hash_password(new_password)
+    await password_resets.delete_for_user(session, user.id)
+    await refresh_sessions.revoke_for_user(session, user_id=user.id, now=now)
+    await session.commit()
+
+
+async def change_password(
+    session: AsyncSession,
+    user: User,
+    current_password: str,
+    new_password: str,
+) -> None:
+    """Change an authenticated user's password and revoke every login session."""
+    if not verify_password(current_password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=INVALID_CURRENT_PASSWORD,
+        )
+    if verify_password(new_password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=PASSWORD_REUSE,
+        )
+
+    now = _utc_now()
+    user.password_hash = hash_password(new_password)
+    await password_resets.delete_for_user(session, user.id)
+    await refresh_sessions.revoke_for_user(session, user_id=user.id, now=now)
+    await session.commit()
 
 
 async def authenticate(session: AsyncSession, email: str, password: str) -> User:

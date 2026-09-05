@@ -56,6 +56,26 @@ class RefreshTokenRequest(APIModel):
     refresh_token: str = Field(min_length=32, repr=False)
 
 
+class ForgotPasswordRequest(APIModel):
+    """Address that should receive password-reset instructions."""
+
+    email: EmailStr = Field(examples=["user@example.com"])
+
+
+class ResetPasswordRequest(APIModel):
+    """A reset token and the replacement password."""
+
+    token: str = Field(min_length=1, repr=False)
+    new_password: str = Field(min_length=MIN_PASSWORD_LENGTH, repr=False)
+
+
+class ChangePasswordRequest(APIModel):
+    """The current and replacement passwords for an authenticated user."""
+
+    current_password: str = Field(min_length=1, repr=False)
+    new_password: str = Field(min_length=MIN_PASSWORD_LENGTH, repr=False)
+
+
 class MessageResponse(APIModel):
     """A successful operation represented by a user-facing message."""
 
