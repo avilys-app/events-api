@@ -301,6 +301,10 @@ async def register(session: AsyncSession, payload: RegisterRequest) -> MessageRe
             first_name=payload.first_name,
             last_name=payload.last_name,
             preferred_locale=payload.locale,
+            terms_accepted_at=now,
+            terms_version=settings.terms_version,
+            marketing_consent=payload.marketing_consent,
+            marketing_consent_updated_at=now,
         )
         confirmation = await confirmations.replace(
             session,

@@ -1,6 +1,7 @@
 """User request and response models."""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import EmailStr, Field, field_validator
 
@@ -19,6 +20,8 @@ class RegisterRequest(APIModel):
     first_name: str = Field(min_length=1)
     last_name: str = Field(min_length=1)
     locale: str = Field(default=DEFAULT_LOCALE, examples=["en", "lt"])
+    accepted_terms: Literal[True] = Field(description="Must be true to create an account")
+    marketing_consent: bool = Field(default=False)
 
     @field_validator("locale", mode="before")
     @classmethod
@@ -96,6 +99,10 @@ class UserResponse(APIModel):
     first_name: str
     last_name: str
     favorite_event_ids: list[int]
+    terms_accepted_at: datetime
+    terms_version: str
+    marketing_consent: bool
+    marketing_consent_updated_at: datetime | None
     created_at: datetime
 
 

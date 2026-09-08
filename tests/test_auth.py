@@ -21,6 +21,7 @@ REGISTRATION = {
     "password": "long-enough-password",
     "firstName": "New",
     "lastName": "Person",
+    "acceptedTerms": True,
 }
 
 
@@ -57,6 +58,10 @@ async def test_register_creates_unverified_user_and_queues_confirmation(
     assert user is not None
     assert user.email_verified_at is None
     assert user.preferred_locale == "en"
+    assert user.terms_accepted_at is not None
+    assert user.terms_version == "v1"
+    assert user.marketing_consent is False
+    assert user.marketing_consent_updated_at is not None
     assert email_sender.messages == []
     message = await queued_email(session)
     assert message.to_address == REGISTRATION["email"]
@@ -64,6 +69,36 @@ async def test_register_creates_unverified_user_and_queues_confirmation(
     assert "Link requested at:" in message.text_body
     assert "Link requested at:" in message.html_body
     assert confirmation_token(message.text_body)
+
+
+async def test_register_requires_terms_acceptance(client: AsyncClient) -> None:
+    missing = await client.post(
+        "/api/auth/register",
+        json={key: value for key, value in REGISTRATION.items() if key != "acceptedTerms"},
+    )
+    declined = await client.post(
+        "/api/auth/register",
+        json={**REGISTRATION, "acceptedTerms": False},
+    )
+
+    assert missing.status_code == 400
+    assert declined.status_code == 400
+
+
+async def test_register_records_marketing_consent(
+    client: AsyncClient,
+    session: AsyncSession,
+) -> None:
+    response = await client.post(
+        "/api/auth/register",
+        json={**REGISTRATION, "marketingConsent": True},
+    )
+
+    assert response.status_code == 201
+    user = await session.scalar(select(User).where(User.email == REGISTRATION["email"]))
+    assert user is not None
+    assert user.marketing_consent is True
+    assert user.marketing_consent_updated_at is not None
 
 
 async def test_register_sends_lithuanian_confirmation_email(
@@ -734,4 +769,9 @@ async def test_profile_returns_authenticated_user(
     response = await client.get("/api/users/profile", headers=auth_headers)
 
     assert response.status_code == 200
-    assert response.json()["email"] == user.email
+    body = response.json()
+    assert body["email"] == user.email
+    assert body["termsAcceptedAt"] == NOW.isoformat()
+    assert body["termsVersion"] == "v1"
+    assert body["marketingConsent"] is False
+    assert body["marketingConsentUpdatedAt"] == NOW.isoformat()

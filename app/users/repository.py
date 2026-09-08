@@ -1,5 +1,7 @@
 """Data access for users."""
 
+from datetime import datetime
+
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +25,10 @@ async def create(
     first_name: str,
     last_name: str,
     preferred_locale: str,
+    terms_accepted_at: datetime,
+    terms_version: str,
+    marketing_consent: bool,
+    marketing_consent_updated_at: datetime,
 ) -> User:
     user = User(
         email=email,
@@ -30,6 +36,10 @@ async def create(
         first_name=first_name,
         last_name=last_name,
         preferred_locale=preferred_locale,
+        terms_accepted_at=terms_accepted_at,
+        terms_version=terms_version,
+        marketing_consent=marketing_consent,
+        marketing_consent_updated_at=marketing_consent_updated_at,
         favorite_event_ids=[],
     )
     session.add(user)

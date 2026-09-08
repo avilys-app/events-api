@@ -69,6 +69,10 @@ async def test_delete_account_removes_user_authentication_data_and_sessions(
         first_name="Other",
         last_name="User",
         email_verified_at=NOW,
+        terms_accepted_at=NOW,
+        terms_version="v1",
+        marketing_consent=False,
+        marketing_consent_updated_at=NOW,
         favorite_event_ids=[],
     )
     session.add(other)

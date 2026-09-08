@@ -106,6 +106,10 @@ async def user(session: AsyncSession) -> User:
         first_name="Some",
         last_name="One",
         email_verified_at=NOW,
+        terms_accepted_at=NOW,
+        terms_version="v1",
+        marketing_consent=False,
+        marketing_consent_updated_at=NOW,
         favorite_event_ids=[],
     )
     session.add(record)

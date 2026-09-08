@@ -47,6 +47,17 @@ field and the preferred `message` field are accepted.
 The API runs at `http://localhost:3000`. Interactive documentation is available
 at `http://localhost:3000/api/docs`.
 
+Registration requires `acceptedTerms: true`. The optional `marketingConsent`
+field defaults to `false`. Terms acceptance and the current marketing preference
+are stored with timestamps. `TERMS_VERSION` is controlled by the backend and
+defaults to `v1`; clients must not supply it. The accepted `termsVersion` is
+returned as additional information in authenticated user responses.
+
+When the published Terms change, update the frontend text and the backend
+`TERMS_VERSION` configuration together. This is currently configured as an
+environment variable in Railway. Do not overwrite existing users' stored
+versions: each value records the version that user actually accepted.
+
 Login returns a short-lived access token and a rotating refresh token. Refresh
 sessions expire after 180 days of inactivity by default; configure the access
 and refresh lifetimes with `JWT_EXPIRES_IN` and `REFRESH_TOKEN_EXPIRES_IN`.
