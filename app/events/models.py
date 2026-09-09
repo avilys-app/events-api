@@ -30,6 +30,7 @@ class Event(Base):
         Numeric(asdecimal=False), default=0, server_default="0"
     )
 
+    #: Upstream stores Lithuanian wall-clock values (Europe/Vilnius), without offsets.
     start_time: Mapped[datetime | None] = mapped_column(DateTime)
     end_time: Mapped[datetime | None] = mapped_column(DateTime)
 

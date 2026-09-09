@@ -87,6 +87,52 @@ The development database uses temporary storage. Running `docker compose down`
 removes its data, so rerun the migration and fixture commands after starting a
 fresh database.
 
+## Saved events and Lithuanian time
+
+The favorites endpoint supports the Upcoming / Passed tabs with an optional
+`status` filter:
+
+```text
+GET /api/users/favorites?status=upcoming&page=1&pageSize=20
+GET /api/users/favorites?status=past&page=1&pageSize=20
+```
+
+Upcoming includes ongoing events. If `endTime` exists, the event becomes past
+at that instant. Otherwise, it becomes past at midnight after its `startTime`
+date in **Europe/Vilnius**. Events with neither timestamp remain upcoming;
+an event with only an end time is classified by that time.
+
+Results default to `startTime ASC` for upcoming and `startTime DESC` for past.
+Unknown start times go last in both groups, with ID breaking ties. Existing
+`orderBy` and `orderDirection` parameters can override the sort. Filtering and
+sorting happen before pagination; `total` counts only the matching group.
+The frontend must load additional pages and reset pagination when switching tabs.
+Omitting `status` still returns both groups with the existing descending default.
+
+The same filter is available on `/api/events`. `hideExpired=true` now uses the
+same end-time-aware upcoming rule, so ongoing events remain visible. Combining
+`status=past` with `hideExpired=true` is rejected as contradictory.
+
+Event `start_time` and `end_time` database columns contain Lithuanian wall-clock
+timestamps without a timezone. Their JSON values now include Lithuania's actual
+offset (`+02:00` in winter, `+03:00` in summer), instead of incorrectly labelling
+those wall-clock values as UTC with `Z`. This changes their interpreted instant
+for clients: e.g. local `2026-06-01 20:00` is returned as
+`2026-06-01T20:00:00+03:00`. No stored event values are shifted or migrated.
+
+Offset-free `startDate` and `endDate` query values are interpreted in Lithuania;
+offset-bearing values are converted to Lithuanian time before querying.
+`endDate` includes that entire Lithuanian calendar day. The timezone follows
+daylight-saving changes rather than using a fixed UTC offset or server timezone.
+The timezone-free columns cannot distinguish the two occurrences of the repeated
+autumn hour; ambiguous wall-clock times use the later, standard-time occurrence,
+consistently with PostgreSQL.
+
+System instants (authentication expiry, audit records, and email queue scheduling)
+retain their existing UTC storage semantics. Email timestamp displays use
+Lithuanian time in both languages. Event wall-clock values must not be confused
+with these UTC system timestamps.
+
 ## Checks
 
 ```bash

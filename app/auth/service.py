@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from html import escape
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
@@ -25,6 +24,7 @@ from app.core.security import (
     parse_duration,
     verify_password,
 )
+from app.core.time import format_system_timestamp
 from app.legal import repository as legal_pages
 from app.mailer import repository as email_outbox
 from app.mailer.base import EmailMessage
@@ -103,8 +103,6 @@ _PASSWORD_RESET_EMAIL_COPY = {
     ),
 }
 
-_LITHUANIAN_TIME_ZONE = ZoneInfo("Europe/Vilnius")
-
 
 def _utc_now() -> datetime:
     """Return naive UTC, matching the application's existing database timestamps."""
@@ -121,16 +119,6 @@ def _token_url(base_url: str, token: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
-def _confirmation_timestamp(requested_at: datetime, locale: str) -> str:
-    requested_at_utc = (
-        requested_at.replace(tzinfo=UTC)
-        if requested_at.tzinfo is None
-        else requested_at.astimezone(UTC)
-    )
-    time_zone = _LITHUANIAN_TIME_ZONE if locale == "lt" else UTC
-    return requested_at_utc.astimezone(time_zone).strftime("%Y-%m-%d %H:%M %Z")
-
-
 def _confirmation_email(
     *,
     user: User,
@@ -142,7 +130,7 @@ def _confirmation_email(
     copy = _CONFIRMATION_EMAIL_COPY.get(user.preferred_locale, _ENGLISH_CONFIRMATION)
     safe_name = escape(user.first_name)
     safe_url = escape(url, quote=True)
-    requested_at_text = _confirmation_timestamp(requested_at, user.preferred_locale)
+    requested_at_text = format_system_timestamp(requested_at)
     return EmailMessage(
         to=user.email,
         subject=copy.subject,
@@ -175,7 +163,7 @@ def _password_reset_email(
     )
     safe_name = escape(user.first_name)
     safe_url = escape(url, quote=True)
-    requested_at_text = _confirmation_timestamp(requested_at, user.preferred_locale)
+    requested_at_text = format_system_timestamp(requested_at)
     return EmailMessage(
         to=user.email,
         subject=copy.subject,
