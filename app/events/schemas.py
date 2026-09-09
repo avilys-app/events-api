@@ -1,6 +1,6 @@
 """Event request and response models."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal, Self
 
@@ -164,10 +164,15 @@ class EventResponse(APIModel):
 
     @field_serializer("start_time", "end_time", when_used="json")
     def serialize_event_datetime(self, value: datetime | None) -> str | None:
-        """Preserve the Lithuanian wall time and include its seasonal UTC offset."""
+        """Keep the legacy Z format used by the frontend's UTC date formatters.
+
+        Naive event columns contain Lithuanian wall times. The Z suffix is a
+        compatibility convention here; expiry calculations use Europe/Vilnius.
+        """
         if value is None:
             return None
-        return event_time(value).isoformat()
+        value = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+        return value.isoformat().replace("+00:00", "Z")
 
     @model_validator(mode="before")
     @classmethod

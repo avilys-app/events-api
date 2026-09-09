@@ -171,7 +171,7 @@ async def test_get_event_returns_derived_fields(client: AsyncClient, session: As
     assert "dedupKey" not in body
 
 
-async def test_get_event_serializes_dates_as_lithuanian_time(
+async def test_get_event_preserves_legacy_date_format(
     client: AsyncClient, session: AsyncSession
 ) -> None:
     event = make_event(
@@ -185,8 +185,8 @@ async def test_get_event_serializes_dates_as_lithuanian_time(
 
     body = (await client.get(f"/api/events/{event.id}")).json()
 
-    assert body["startTime"] == "2026-06-01T12:00:00+03:00"
-    assert body["endTime"] == "2026-06-01T14:00:00+03:00"
+    assert body["startTime"] == "2026-06-01T12:00:00Z"
+    assert body["endTime"] == "2026-06-01T14:00:00Z"
 
 
 async def test_get_missing_event_is_404(client: AsyncClient) -> None:

@@ -114,11 +114,15 @@ same end-time-aware upcoming rule, so ongoing events remain visible. Combining
 `status=past` with `hideExpired=true` is rejected as contradictory.
 
 Event `start_time` and `end_time` database columns contain Lithuanian wall-clock
-timestamps without a timezone. Their JSON values now include Lithuania's actual
-offset (`+02:00` in winter, `+03:00` in summer), instead of incorrectly labelling
-those wall-clock values as UTC with `Z`. This changes their interpreted instant
-for clients: e.g. local `2026-06-01 20:00` is returned as
-`2026-06-01T20:00:00+03:00`. No stored event values are shifted or migrated.
+timestamps without a timezone. Responses preserve the legacy format expected by
+the frontend's `dayjs.utc` formatters: local `2026-06-01 20:00` is returned as
+`2026-06-01T20:00:00Z`, so the existing UI displays `20:00`. This applies to both
+`startTime` and `endTime`, in all event endpoints. Null timestamps stay null.
+The `Z` suffix is a compatibility convention for these event fields, not their
+true UTC instant. Do not use it to calculate expiry on the frontend; use `status`
+to request the backend's classification. Correct timezone-bearing responses
+require a coordinated frontend update, including calendar exports. No stored
+event values are shifted or migrated.
 
 Offset-free `startDate` and `endDate` query values are interpreted in Lithuania;
 offset-bearing values are converted to Lithuanian time before querying.

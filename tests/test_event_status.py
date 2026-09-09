@@ -180,21 +180,22 @@ async def test_event_date_bounds_convert_offsets_to_lithuanian_wall_time(
 
 
 @pytest.mark.parametrize(
-    ("start", "end", "offset"),
+    ("start", "end"),
     [
-        (datetime(2026, 1, 1, 20), datetime(2026, 1, 1, 22), "+02:00"),
-        (datetime(2026, 6, 1, 20), datetime(2026, 6, 1, 22), "+03:00"),
+        (datetime(2026, 1, 1, 20), datetime(2026, 1, 1, 22)),
+        (datetime(2026, 6, 1, 20), datetime(2026, 6, 1, 22)),
+        (datetime(2026, 6, 1, 0), None),
     ],
 )
-async def test_event_response_preserves_local_clock_and_seasonal_offset(
-    client: AsyncClient, session: AsyncSession, start: datetime, end: datetime, offset: str
+async def test_event_response_preserves_legacy_wall_time_in_all_seasons(
+    client: AsyncClient, session: AsyncSession, start: datetime, end: datetime | None
 ) -> None:
     record = make_event(start_time=start, end_time=end)
     session.add(record)
     await session.commit()
     response = await client.get(f"/api/events/{record.id}")
-    assert response.json()["startTime"] == start.isoformat() + offset
-    assert response.json()["endTime"] == end.isoformat() + offset
+    assert response.json()["startTime"] == start.isoformat() + "Z"
+    assert response.json()["endTime"] == (end.isoformat() + "Z" if end is not None else None)
 
 
 async def test_ongoing_event_survives_spring_clock_change(
@@ -218,7 +219,7 @@ async def test_ongoing_event_survives_spring_clock_change(
         assert response.json()["total"] == total
 
 
-async def test_repeated_autumn_hour_uses_same_instant_in_filter_and_response(
+async def test_repeated_autumn_hour_filters_in_lithuanian_time_with_legacy_response(
     client: AsyncClient, session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     record = make_event(
@@ -227,8 +228,8 @@ async def test_repeated_autumn_hour_uses_same_instant_in_filter_and_response(
     session.add(record)
     await session.commit()
     body = (await client.get(f"/api/events/{record.id}")).json()
-    assert body["startTime"] == "2026-10-25T02:00:00+03:00"
-    assert body["endTime"] == "2026-10-25T03:30:00+02:00"
+    assert body["startTime"] == "2026-10-25T02:00:00Z"
+    assert body["endTime"] == "2026-10-25T03:30:00Z"
 
     # The first 03:30 is not the recorded end; it means the later 03:30 EET.
     for instant, total in [
