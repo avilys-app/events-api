@@ -1,16 +1,18 @@
 """Event request and response models."""
 
-from datetime import UTC, datetime
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal, Self
 
 from pydantic import Field, field_serializer, field_validator, model_validator
 
 from app.core.schemas import APIModel
+from app.core.time import event_time
 from app.events.models import Event
 
 OrderBy = Literal["startTime", "popularityCounter", "price"]
 OrderDirection = Literal["ASC", "DESC"]
+EventStatus = Literal["upcoming", "past"]
 
 MAX_PAGE_SIZE = 100
 
@@ -33,9 +35,11 @@ class EventFilters(APIModel):
         examples=["Vilnius,Kaunas"],
     )
 
-    start_date: datetime | None = Field(default=None, description="Earliest start time")
+    start_date: datetime | None = Field(
+        default=None, description="Earliest start time; offset-free dates use Europe/Vilnius"
+    )
     end_date: datetime | None = Field(
-        default=None, description="Latest start time, inclusive of the whole day"
+        default=None, description="Latest start time, inclusive of the whole day in Europe/Vilnius"
     )
 
     price_from: float | None = Field(default=None, ge=0, description="Minimum price")
@@ -43,13 +47,35 @@ class EventFilters(APIModel):
 
     free: bool | None = Field(default=None, description="Restrict to free events")
     search: str | None = Field(default=None, description="Accent-insensitive title search")
-    hide_expired: bool | None = Field(default=None, description="Exclude events already started")
+    hide_expired: bool | None = Field(
+        default=None, description="Exclude finished events, equivalent to status=upcoming"
+    )
+    status: EventStatus | None = Field(
+        default=None,
+        description=(
+            "Upcoming includes ongoing and undated events; past means endTime has been reached, "
+            "or the start day in Europe/Vilnius has ended when endTime is missing. "
+            "Omit to include both. Cannot combine past with hideExpired=true."
+        ),
+    )
 
     page: int = Field(default=1, ge=1, description="1-based page number")
     page_size: int = Field(default=10, ge=1, le=MAX_PAGE_SIZE, description="Items per page")
 
     order_by: OrderBy = Field(default="startTime", description="Field to sort by")
-    order_direction: OrderDirection = Field(default="DESC", description="Sort direction")
+    order_direction: OrderDirection | None = Field(
+        default=None, description="Sort direction; defaults to ASC for upcoming, otherwise DESC"
+    )
+
+    @property
+    def sort_direction(self) -> OrderDirection:
+        return self.order_direction or ("ASC" if self.status == "upcoming" else "DESC")
+
+    @field_validator("start_date", "end_date")
+    @classmethod
+    def normalize_event_date(cls, value: datetime | None) -> datetime | None:
+        # asyncpg expects naive values for the timestamp-without-time-zone columns.
+        return event_time(value).replace(tzinfo=None) if value is not None else None
 
     @field_validator("location", mode="before")
     @classmethod
@@ -86,7 +112,9 @@ class EventFilters(APIModel):
         return value
 
     @model_validator(mode="after")
-    def check_price_range(self) -> Self:
+    def check_filter_combinations(self) -> Self:
+        if self.status == "past" and self.hide_expired:
+            raise ValueError("status=past cannot be combined with hideExpired=true")
         if (
             self.price_from is not None
             and self.price_to is not None
@@ -135,12 +163,11 @@ class EventResponse(APIModel):
     free: bool = Field(description="Whether the event carries no evidence of costing money")
 
     @field_serializer("start_time", "end_time", when_used="json")
-    def serialize_datetime_as_utc(self, value: datetime | None) -> str | None:
-        """Match the previous API's JavaScript ``Date`` JSON representation."""
+    def serialize_event_datetime(self, value: datetime | None) -> str | None:
+        """Preserve the Lithuanian wall time and include its seasonal UTC offset."""
         if value is None:
             return None
-        value = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
-        return value.isoformat().replace("+00:00", "Z")
+        return event_time(value).isoformat()
 
     @model_validator(mode="before")
     @classmethod

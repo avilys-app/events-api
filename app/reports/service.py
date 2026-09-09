@@ -8,6 +8,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.time import format_system_timestamp
 from app.mailer import repository as email_outbox
 from app.mailer.base import EmailMessage
 from app.reports.schemas import SubmitReportRequest
@@ -32,7 +33,7 @@ def _report_email(
     submitted_at: datetime,
 ) -> EmailMessage:
     reporter = str(payload.email) if payload.email is not None else None
-    submitted_at_text = submitted_at.strftime("%Y-%m-%d %H:%M UTC")
+    submitted_at_text = format_system_timestamp(submitted_at)
     platform = _display(payload.platform)
     app_version = _display(payload.app_version)
 

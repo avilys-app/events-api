@@ -7,10 +7,11 @@ testable without HTTP.
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import ColumnElement, Select, case, func, or_, select, update
+from sqlalchemy import ColumnElement, Select, and_, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import UnaryExpression
 
+from app.core.time import LITHUANIAN_TIME_ZONE, local_now
 from app.events.models import Event
 from app.events.schemas import EventFilters, OrderDirection
 
@@ -26,6 +27,20 @@ _SORTABLE: dict[str, Any] = {
 def _directed(column: Any, direction: OrderDirection) -> UnaryExpression[Any]:
     directed: UnaryExpression[Any] = column.asc() if direction == "ASC" else column.desc()
     return directed
+
+
+def _is_past(now: datetime) -> ColumnElement[bool]:
+    """Use the recorded end instant, falling back to the end of the local start day."""
+    today = now.astimezone(LITHUANIAN_TIME_ZONE).replace(
+        hour=0, minute=0, second=0, microsecond=0, tzinfo=None
+    )
+    return case(
+        (
+            Event.end_time.is_not(None),
+            func.timezone(LITHUANIAN_TIME_ZONE.key, Event.end_time) <= now.astimezone(UTC),
+        ),
+        else_=and_(Event.start_time.is_not(None), Event.start_time < today),
+    )
 
 
 def _build_filters(
@@ -61,8 +76,9 @@ def _build_filters(
     if filters.search:
         clauses.append(func.unaccent(Event.title).ilike(func.unaccent(f"%{filters.search}%")))
 
-    if filters.hide_expired:
-        clauses.append(Event.start_time >= datetime.now(UTC).date())
+    if filters.status is not None or filters.hide_expired:
+        past = _is_past(local_now())
+        clauses.append(past if filters.status == "past" else ~past)
 
     # An event with no recorded price coalesces to 0, which already satisfies
     # any non-negative bound -- so free events need no special case here.
@@ -83,8 +99,11 @@ def _build_filters(
 def _apply_ordering(statement: Select[tuple[Event]], filters: EventFilters) -> Select[tuple[Event]]:
     """Order results, grouping priceless events into predictable blocks."""
     if filters.order_by != "price":
+        order = _directed(_SORTABLE[filters.order_by], filters.sort_direction)
+        if filters.status is not None:
+            order = order.nulls_last()
         return statement.order_by(
-            _directed(_SORTABLE[filters.order_by], filters.order_direction),
+            order,
             Event.id.asc(),
         )
 
@@ -92,7 +111,7 @@ def _apply_ordering(statement: Select[tuple[Event]], filters: EventFilters) -> S
 
     # Free events sink to the bottom whenever a price bound is active, and
     # otherwise follow the sort direction.
-    sink_free = has_price_bound or filters.order_direction == "DESC"
+    sink_free = has_price_bound or filters.sort_direction == "DESC"
     free_last: OrderDirection = "ASC" if sink_free else "DESC"
 
     return statement.order_by(
@@ -102,7 +121,7 @@ def _apply_ordering(statement: Select[tuple[Event]], filters: EventFilters) -> S
             (Event.price_from.is_(None) & ~cast(ColumnElement[bool], Event.is_free), 1),
             else_=0,
         ).asc(),
-        _directed(_SORTABLE["price"], filters.order_direction),
+        _directed(_SORTABLE["price"], filters.sort_direction),
         Event.id.asc(),
     )
 

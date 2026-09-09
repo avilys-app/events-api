@@ -5,8 +5,8 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
 from app.auth.models import PasswordResetToken, RefreshTokenSession
-from app.auth.service import _confirmation_timestamp
 from app.core.security import TokenClaims, create_access_token, hash_refresh_token
+from app.core.time import format_system_timestamp
 from app.legal.models import LegalPage
 from app.mailer.models import EmailOutboxJob
 from app.users.models import EmailConfirmationToken, User
@@ -26,11 +26,12 @@ REGISTRATION = {
 }
 
 
-def test_confirmation_timestamp_uses_locale_time_zone() -> None:
+def test_system_timestamp_uses_lithuanian_time_zone() -> None:
     requested_at = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 
-    assert _confirmation_timestamp(requested_at, "en") == "2026-06-01 12:00 UTC"
-    assert _confirmation_timestamp(requested_at, "lt") == "2026-06-01 15:00 EEST"
+    assert format_system_timestamp(requested_at) == "2026-06-01 15:00 EEST"
+    assert format_system_timestamp(requested_at.replace(tzinfo=None)) == "2026-06-01 15:00 EEST"
+    assert format_system_timestamp(datetime(2026, 1, 1, 12)) == "2026-01-01 14:00 EET"
 
 
 def confirmation_token(text: str) -> str:

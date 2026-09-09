@@ -8,6 +8,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from tests.conftest import NOW
 from tests.fakes import RecordingEmailSender
 
 
@@ -24,6 +25,7 @@ async def test_submit_report_queues_legacy_frontend_payload(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(service, "get_settings", report_settings)
+    monkeypatch.setattr(service, "_utc_now", lambda: NOW)
 
     response = await client.post(
         "/api/submit-report",
@@ -43,6 +45,8 @@ async def test_submit_report_queues_legacy_frontend_payload(
     assert job.idempotency_key.startswith("issue-report/")
     assert "The &lt;search&gt; button is broken." in job.html_body
     assert "The <search> button is broken." in job.text_body
+    assert "Submitted at: 2026-06-01 15:00 EEST" in job.text_body
+    assert "2026-06-01 15:00 EEST" in job.html_body
 
 
 async def test_submit_report_accepts_new_payload_and_delivers_from_outbox(
