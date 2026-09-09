@@ -26,6 +26,9 @@ router = APIRouter(prefix="/api/auth", tags=["Auth"])
     summary="Register a new user",
     responses={
         status.HTTP_409_CONFLICT: {"description": "Email already in use"},
+        status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "description": "Published Terms are unavailable for the requested locale"
+        },
     },
 )
 async def register(

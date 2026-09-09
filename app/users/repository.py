@@ -27,8 +27,10 @@ async def create(
     preferred_locale: str,
     terms_accepted_at: datetime,
     terms_version: str,
-    marketing_consent: bool,
-    marketing_consent_updated_at: datetime,
+    marketing_email_consent: bool,
+    marketing_email_consent_updated_at: datetime,
+    marketing_push_consent: bool,
+    marketing_push_consent_updated_at: datetime,
 ) -> User:
     user = User(
         email=email,
@@ -38,8 +40,10 @@ async def create(
         preferred_locale=preferred_locale,
         terms_accepted_at=terms_accepted_at,
         terms_version=terms_version,
-        marketing_consent=marketing_consent,
-        marketing_consent_updated_at=marketing_consent_updated_at,
+        marketing_email_consent=marketing_email_consent,
+        marketing_email_consent_updated_at=marketing_email_consent_updated_at,
+        marketing_push_consent=marketing_push_consent,
+        marketing_push_consent_updated_at=marketing_push_consent_updated_at,
         favorite_event_ids=[],
     )
     session.add(user)
@@ -50,6 +54,35 @@ async def create(
 async def delete_user(session: AsyncSession, user: User) -> None:
     await session.delete(user)
     await session.commit()
+
+
+async def update_marketing_consents(
+    session: AsyncSession,
+    user: User,
+    *,
+    marketing_email_consent: bool | None,
+    marketing_push_consent: bool | None,
+    updated_at: datetime,
+) -> User:
+    values: dict[str, object] = {}
+    if (
+        marketing_email_consent is not None
+        and marketing_email_consent != user.marketing_email_consent
+    ):
+        values["marketing_email_consent"] = marketing_email_consent
+        values["marketing_email_consent_updated_at"] = updated_at
+    if (
+        marketing_push_consent is not None
+        and marketing_push_consent != user.marketing_push_consent
+    ):
+        values["marketing_push_consent"] = marketing_push_consent
+        values["marketing_push_consent_updated_at"] = updated_at
+
+    if values:
+        await session.execute(update(User).where(User.id == user.id).values(**values))
+        await session.commit()
+        await session.refresh(user)
+    return user
 
 
 async def add_favorite(session: AsyncSession, user: User, event_id: int) -> User:

@@ -14,6 +14,7 @@ import pytest
 from app.core.database import Base, get_db_session
 from app.core.security import hash_password
 from app.events.models import Event
+from app.legal.models import LegalPage
 from app.mailer.dependencies import get_email_sender
 from app.main import create_app
 from app.users.models import User
@@ -73,7 +74,27 @@ async def session(
 async def clean_tables(session: AsyncSession) -> AsyncIterator[None]:
     from sqlalchemy import text
 
-    await session.execute(text("TRUNCATE events, users RESTART IDENTITY CASCADE"))
+    await session.execute(
+        text("TRUNCATE legal_pages, events, users RESTART IDENTITY CASCADE")
+    )
+    session.add_all(
+        [
+            LegalPage(
+                slug="terms-and-conditions",
+                locale="en",
+                title="Terms of use",
+                content="Test terms.",
+                version="v1",
+            ),
+            LegalPage(
+                slug="terms-and-conditions",
+                locale="lt",
+                title="Naudojimo sąlygos",
+                content="Testavimo sąlygos.",
+                version="v1",
+            ),
+        ]
+    )
     await session.commit()
     yield
 
@@ -108,8 +129,10 @@ async def user(session: AsyncSession) -> User:
         email_verified_at=NOW,
         terms_accepted_at=NOW,
         terms_version="v1",
-        marketing_consent=False,
-        marketing_consent_updated_at=NOW,
+        marketing_email_consent=False,
+        marketing_email_consent_updated_at=NOW,
+        marketing_push_consent=False,
+        marketing_push_consent_updated_at=NOW,
         favorite_event_ids=[],
     )
     session.add(record)

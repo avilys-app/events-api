@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import EmailStr, Field, field_validator
+from pydantic import EmailStr, Field, field_validator, model_validator
 
 from app.core.schemas import APIModel
 
@@ -21,7 +21,8 @@ class RegisterRequest(APIModel):
     last_name: str = Field(min_length=1)
     locale: str = Field(default=DEFAULT_LOCALE, examples=["en", "lt"])
     accepted_terms: Literal[True] = Field(description="Must be true to create an account")
-    marketing_consent: bool = Field(default=False)
+    marketing_email_consent: bool = Field(default=False)
+    marketing_push_consent: bool = Field(default=False)
 
     @field_validator("locale", mode="before")
     @classmethod
@@ -85,6 +86,22 @@ class DeleteAccountRequest(APIModel):
     password: str = Field(min_length=1, repr=False)
 
 
+class MarketingConsentsUpdateRequest(APIModel):
+    """One or both channel-specific marketing preferences."""
+
+    marketing_email_consent: bool | None = None
+    marketing_push_consent: bool | None = None
+
+    @model_validator(mode="after")
+    def require_preference(self) -> MarketingConsentsUpdateRequest:
+        if (
+            self.marketing_email_consent is None
+            and self.marketing_push_consent is None
+        ):
+            raise ValueError("at least one marketing consent must be provided")
+        return self
+
+
 class MessageResponse(APIModel):
     """A successful operation represented by a user-facing message."""
 
@@ -101,9 +118,20 @@ class UserResponse(APIModel):
     favorite_event_ids: list[int]
     terms_accepted_at: datetime
     terms_version: str
-    marketing_consent: bool
-    marketing_consent_updated_at: datetime | None
+    marketing_email_consent: bool
+    marketing_email_consent_updated_at: datetime | None
+    marketing_push_consent: bool
+    marketing_push_consent_updated_at: datetime | None
     created_at: datetime
+
+
+class MarketingConsentsResponse(APIModel):
+    """The current channel-specific marketing preferences."""
+
+    marketing_email_consent: bool
+    marketing_email_consent_updated_at: datetime | None
+    marketing_push_consent: bool
+    marketing_push_consent_updated_at: datetime | None
 
 
 class AuthResponse(APIModel):

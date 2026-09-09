@@ -13,6 +13,76 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tests.conftest import NOW
 
 
+async def test_update_marketing_consents_requires_authentication(
+    client: AsyncClient,
+) -> None:
+    response = await client.patch(
+        "/api/users/marketing-consents",
+        json={"marketingEmailConsent": True},
+    )
+
+    assert response.status_code == 401
+
+
+async def test_update_marketing_consents_requires_at_least_one_channel(
+    client: AsyncClient,
+    auth_headers: dict[str, str],
+) -> None:
+    response = await client.patch(
+        "/api/users/marketing-consents",
+        headers=auth_headers,
+        json={},
+    )
+
+    assert response.status_code == 400
+
+
+async def test_update_marketing_consents_changes_channels_independently(
+    client: AsyncClient,
+    session: AsyncSession,
+    user: User,
+    auth_headers: dict[str, str],
+) -> None:
+    email_response = await client.patch(
+        "/api/users/marketing-consents",
+        headers=auth_headers,
+        json={"marketingEmailConsent": True},
+    )
+
+    assert email_response.status_code == 200
+    email_body = email_response.json()
+    assert email_body["marketingEmailConsent"] is True
+    assert email_body["marketingEmailConsentUpdatedAt"] != NOW.isoformat()
+    assert email_body["marketingPushConsent"] is False
+    assert email_body["marketingPushConsentUpdatedAt"] == NOW.isoformat()
+
+    email_updated_at = email_body["marketingEmailConsentUpdatedAt"]
+    push_response = await client.patch(
+        "/api/users/marketing-consents",
+        headers=auth_headers,
+        json={"marketingPushConsent": True},
+    )
+
+    assert push_response.status_code == 200
+    push_body = push_response.json()
+    assert push_body["marketingEmailConsent"] is True
+    assert push_body["marketingEmailConsentUpdatedAt"] == email_updated_at
+    assert push_body["marketingPushConsent"] is True
+    assert push_body["marketingPushConsentUpdatedAt"] != NOW.isoformat()
+
+    withdrawal = await client.patch(
+        "/api/users/marketing-consents",
+        headers=auth_headers,
+        json={"marketingEmailConsent": False},
+    )
+
+    assert withdrawal.status_code == 200
+    assert withdrawal.json()["marketingEmailConsent"] is False
+    await session.refresh(user)
+    assert user.marketing_email_consent is False
+    assert user.marketing_push_consent is True
+
+
 async def test_delete_account_requires_authentication(client: AsyncClient) -> None:
     response = await client.request(
         "DELETE",
@@ -71,8 +141,10 @@ async def test_delete_account_removes_user_authentication_data_and_sessions(
         email_verified_at=NOW,
         terms_accepted_at=NOW,
         terms_version="v1",
-        marketing_consent=False,
-        marketing_consent_updated_at=NOW,
+        marketing_email_consent=False,
+        marketing_email_consent_updated_at=NOW,
+        marketing_push_consent=False,
+        marketing_push_consent_updated_at=NOW,
         favorite_event_ids=[],
     )
     session.add(other)
