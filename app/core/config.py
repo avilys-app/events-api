@@ -32,7 +32,6 @@ class Settings(BaseSettings):
     jwt_secret: SecretStr
     jwt_expires_in: str = Field(default="15m", pattern=r"^\d+[dhms]$")
     refresh_token_expires_in: str = Field(default="180d", pattern=r"^\d+[dhms]$")
-    terms_version: str = Field(default="v1", min_length=1)
 
     resend_api_key: SecretStr = SecretStr("")
     email_from: str = "Events <onboarding@resend.dev>"

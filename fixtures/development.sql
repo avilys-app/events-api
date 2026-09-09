@@ -6,6 +6,17 @@
 
 BEGIN;
 
+INSERT INTO legal_pages (slug, locale, title, content, version)
+VALUES
+  ('terms-and-conditions', 'en', 'Terms of use', 'Local development terms.', 'v1'),
+  ('terms-and-conditions', 'lt', 'Naudojimo sąlygos', 'Vietinės kūrimo aplinkos sąlygos.', 'v1')
+ON CONFLICT (slug, locale) DO UPDATE
+SET
+  title = EXCLUDED.title,
+  content = EXCLUDED.content,
+  version = EXCLUDED.version,
+  updated_at = CURRENT_TIMESTAMP;
+
 INSERT INTO events (
   title, end_time, venue_name, city, description, image_url,
   organizer_name, category, ticket_url, popularity_counter,
@@ -205,8 +216,9 @@ VALUES
 
 INSERT INTO users (
   email, password_hash, first_name, last_name, email_verified_at,
-  terms_accepted_at, terms_version, marketing_consent,
-  marketing_consent_updated_at, favorite_event_ids
+  terms_accepted_at, terms_version, marketing_email_consent,
+  marketing_email_consent_updated_at, marketing_push_consent,
+  marketing_push_consent_updated_at, favorite_event_ids
 )
 VALUES (
   'demo@avilys.example.com',
@@ -216,6 +228,8 @@ VALUES (
   CURRENT_TIMESTAMP,
   CURRENT_TIMESTAMP,
   'v1',
+  FALSE,
+  CURRENT_TIMESTAMP,
   FALSE,
   CURRENT_TIMESTAMP,
   ARRAY(

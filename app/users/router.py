@@ -9,7 +9,12 @@ from app.events import repository as events
 from app.events.schemas import EventFilters, EventResponse, PaginatedEventResponse
 from app.users import repository as users
 from app.users import service
-from app.users.schemas import DeleteAccountRequest, UserResponse
+from app.users.schemas import (
+    DeleteAccountRequest,
+    MarketingConsentsResponse,
+    MarketingConsentsUpdateRequest,
+    UserResponse,
+)
 
 router = APIRouter(
     prefix="/api/users",
@@ -39,6 +44,18 @@ async def delete_profile(
     session: DbSession,
 ) -> None:
     await service.delete_account(session, user, payload.password)
+
+
+@router.patch(
+    "/marketing-consents",
+    summary="Update email and push marketing consent",
+)
+async def update_marketing_consents(
+    payload: MarketingConsentsUpdateRequest,
+    user: CurrentUser,
+    session: DbSession,
+) -> MarketingConsentsResponse:
+    return await service.update_marketing_consents(session, user, payload)
 
 
 @router.get("/favorites", summary="List the current user's favorite events")

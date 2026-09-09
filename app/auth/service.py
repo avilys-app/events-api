@@ -25,6 +25,7 @@ from app.core.security import (
     parse_duration,
     verify_password,
 )
+from app.legal import repository as legal_pages
 from app.mailer import repository as email_outbox
 from app.mailer.base import EmailMessage
 from app.users import repository as users
@@ -41,6 +42,7 @@ INVALID_PASSWORD_RESET_TOKEN = "Invalid or expired password reset token"
 INVALID_CURRENT_PASSWORD = "Current password is incorrect"
 PASSWORD_REUSE = "New password must be different from the current password"
 PASSWORD_RESET_MESSAGE = "If the account exists, a password reset email has been sent."
+TERMS_UNAVAILABLE = "Terms and Conditions are temporarily unavailable"
 
 @dataclass(frozen=True, slots=True)
 class ConfirmationEmailCopy:
@@ -290,6 +292,13 @@ async def register(session: AsyncSession, payload: RegisterRequest) -> MessageRe
     if await users.get_by_email(session, payload.email) is not None:
         raise _duplicate_email()
 
+    terms_version = await legal_pages.get_terms_version(session, payload.locale)
+    if terms_version is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=TERMS_UNAVAILABLE,
+        )
+
     settings = get_settings()
     raw_token = secrets.token_urlsafe(32)
     now = _utc_now()
@@ -302,9 +311,11 @@ async def register(session: AsyncSession, payload: RegisterRequest) -> MessageRe
             last_name=payload.last_name,
             preferred_locale=payload.locale,
             terms_accepted_at=now,
-            terms_version=settings.terms_version,
-            marketing_consent=payload.marketing_consent,
-            marketing_consent_updated_at=now,
+            terms_version=terms_version,
+            marketing_email_consent=payload.marketing_email_consent,
+            marketing_email_consent_updated_at=now,
+            marketing_push_consent=payload.marketing_push_consent,
+            marketing_push_consent_updated_at=now,
         )
         confirmation = await confirmations.replace(
             session,

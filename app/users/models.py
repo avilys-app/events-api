@@ -29,8 +29,18 @@ class User(Base):
     preferred_locale: Mapped[str] = mapped_column(Text, server_default=text("'en'"))
     terms_accepted_at: Mapped[datetime] = mapped_column(DateTime)
     terms_version: Mapped[str] = mapped_column(Text)
-    marketing_consent: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
-    marketing_consent_updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    marketing_email_consent: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false")
+    )
+    marketing_email_consent_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
+    marketing_push_consent: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false")
+    )
+    marketing_push_consent_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
 
     #: Denormalised list of favorited event ids. Kept as an array because the
     #: favorites endpoints only ever read the whole set; a join table would add

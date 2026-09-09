@@ -47,16 +47,23 @@ field and the preferred `message` field are accepted.
 The API runs at `http://localhost:3000`. Interactive documentation is available
 at `http://localhost:3000/api/docs`.
 
-Registration requires `acceptedTerms: true`. The optional `marketingConsent`
-field defaults to `false`. Terms acceptance and the current marketing preference
-are stored with timestamps. `TERMS_VERSION` is controlled by the backend and
-defaults to `v1`; clients must not supply it. The accepted `termsVersion` is
-returned as additional information in authenticated user responses.
+Registration requires `acceptedTerms: true`. The optional
+`marketingEmailConsent` and `marketingPushConsent` fields default to `false`.
+Terms acceptance and both marketing preferences are stored with timestamps.
+Clients must not supply `termsVersion`: registration reads it from the matching
+`terms-and-conditions` row in `legal_pages`. The accepted version is returned in
+authenticated user responses.
 
-When the published Terms change, update the frontend text and the backend
-`TERMS_VERSION` configuration together. This is currently configured as an
-environment variable in Railway. Do not overwrite existing users' stored
-versions: each value records the version that user actually accepted.
+When the published Terms change, update both localized rows and give them the
+same new version, such as `v2`. Do not overwrite existing users' stored versions:
+each value records the version that user actually accepted.
+
+Alembic adopts the existing Supabase `legal_pages` table and creates it in fresh
+local/test databases. Future schema changes to this table should use Alembic.
+
+Authenticated users can independently grant or withdraw email and push marketing
+consent with `PATCH /api/users/marketing-consents`. Transactional account emails
+such as confirmation and password reset are not marketing and are unaffected.
 
 Login returns a short-lived access token and a rotating refresh token. Refresh
 sessions expire after 180 days of inactivity by default; configure the access

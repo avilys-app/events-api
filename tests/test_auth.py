@@ -7,10 +7,11 @@ from urllib.parse import parse_qs, urlsplit
 from app.auth.models import PasswordResetToken, RefreshTokenSession
 from app.auth.service import _confirmation_timestamp
 from app.core.security import TokenClaims, create_access_token, hash_refresh_token
+from app.legal.models import LegalPage
 from app.mailer.models import EmailOutboxJob
 from app.users.models import EmailConfirmationToken, User
 from httpx import AsyncClient
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.conftest import NOW
@@ -60,8 +61,10 @@ async def test_register_creates_unverified_user_and_queues_confirmation(
     assert user.preferred_locale == "en"
     assert user.terms_accepted_at is not None
     assert user.terms_version == "v1"
-    assert user.marketing_consent is False
-    assert user.marketing_consent_updated_at is not None
+    assert user.marketing_email_consent is False
+    assert user.marketing_email_consent_updated_at is not None
+    assert user.marketing_push_consent is False
+    assert user.marketing_push_consent_updated_at is not None
     assert email_sender.messages == []
     message = await queued_email(session)
     assert message.to_address == REGISTRATION["email"]
@@ -85,20 +88,71 @@ async def test_register_requires_terms_acceptance(client: AsyncClient) -> None:
     assert declined.status_code == 400
 
 
-async def test_register_records_marketing_consent(
+async def test_register_records_channel_specific_marketing_consent(
     client: AsyncClient,
     session: AsyncSession,
 ) -> None:
     response = await client.post(
         "/api/auth/register",
-        json={**REGISTRATION, "marketingConsent": True},
+        json={
+            **REGISTRATION,
+            "marketingEmailConsent": True,
+            "marketingPushConsent": True,
+        },
     )
 
     assert response.status_code == 201
     user = await session.scalar(select(User).where(User.email == REGISTRATION["email"]))
     assert user is not None
-    assert user.marketing_consent is True
-    assert user.marketing_consent_updated_at is not None
+    assert user.marketing_email_consent is True
+    assert user.marketing_email_consent_updated_at is not None
+    assert user.marketing_push_consent is True
+    assert user.marketing_push_consent_updated_at is not None
+
+
+async def test_register_reads_terms_version_from_legal_page(
+    client: AsyncClient,
+    session: AsyncSession,
+) -> None:
+    terms = await session.scalar(
+        select(LegalPage).where(
+            LegalPage.slug == "terms-and-conditions",
+            LegalPage.locale == "en",
+        )
+    )
+    assert terms is not None
+    terms.version = "v2"
+    await session.commit()
+
+    response = await client.post("/api/auth/register", json=REGISTRATION)
+
+    assert response.status_code == 201
+    user = await session.scalar(select(User).where(User.email == REGISTRATION["email"]))
+    assert user is not None
+    assert user.terms_version == "v2"
+
+
+async def test_register_fails_when_localized_terms_are_missing(
+    client: AsyncClient,
+    session: AsyncSession,
+) -> None:
+    await session.execute(
+        delete(LegalPage).where(
+            LegalPage.slug == "terms-and-conditions",
+            LegalPage.locale == "en",
+        )
+    )
+    await session.commit()
+
+    response = await client.post("/api/auth/register", json=REGISTRATION)
+
+    assert response.status_code == 503
+    assert response.json()["message"] == (
+        "Terms and Conditions are temporarily unavailable"
+    )
+    assert await session.scalar(
+        select(User).where(User.email == REGISTRATION["email"])
+    ) is None
 
 
 async def test_register_sends_lithuanian_confirmation_email(
@@ -773,5 +827,7 @@ async def test_profile_returns_authenticated_user(
     assert body["email"] == user.email
     assert body["termsAcceptedAt"] == NOW.isoformat()
     assert body["termsVersion"] == "v1"
-    assert body["marketingConsent"] is False
-    assert body["marketingConsentUpdatedAt"] == NOW.isoformat()
+    assert body["marketingEmailConsent"] is False
+    assert body["marketingEmailConsentUpdatedAt"] == NOW.isoformat()
+    assert body["marketingPushConsent"] is False
+    assert body["marketingPushConsentUpdatedAt"] == NOW.isoformat()

@@ -10,6 +10,7 @@ from app.auth import models as _auth  # noqa: F401
 from app.core.config import get_settings
 from app.core.database import Base, supabase_pooler_connect_args
 from app.events import models as _events  # noqa: F401
+from app.legal import models as _legal  # noqa: F401
 from app.mailer import models as _mailer  # noqa: F401
 from app.users import models as _users  # noqa: F401
 from sqlalchemy import Connection, pool
