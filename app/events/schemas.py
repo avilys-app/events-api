@@ -36,7 +36,11 @@ class EventFilters(APIModel):
     )
 
     start_date: datetime | None = Field(
-        default=None, description="Earliest start time; offset-free dates use Europe/Vilnius"
+        default=None,
+        description=(
+            "Beginning of the event window, including events already ongoing at this time. "
+            "Offset-free dates use Europe/Vilnius."
+        ),
     )
     end_date: datetime | None = Field(
         default=None, description="Latest start time, inclusive of the whole day in Europe/Vilnius"
@@ -62,7 +66,14 @@ class EventFilters(APIModel):
     page: int = Field(default=1, ge=1, description="1-based page number")
     page_size: int = Field(default=10, ge=1, le=MAX_PAGE_SIZE, description="Items per page")
 
-    order_by: OrderBy = Field(default="startTime", description="Field to sort by")
+    order_by: OrderBy = Field(
+        default="startTime",
+        description=(
+            "Field to sort by. startTime ASC places events longer than the configured "
+            "LONG_EVENT_THRESHOLD_MONTHS (default: 6 calendar months) after other dated events, "
+            "then orders each group by start time."
+        ),
+    )
     order_direction: OrderDirection | None = Field(
         default=None, description="Sort direction; defaults to ASC for upcoming, otherwise DESC"
     )

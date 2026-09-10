@@ -103,6 +103,25 @@ date in **Europe/Vilnius**. Events with neither timestamp remain upcoming;
 an event with only an end time is classified by that time.
 
 Results default to `startTime ASC` for upcoming and `startTime DESC` for past.
+When using `startTime ASC`, events whose total duration exceeds
+`LONG_EVENT_THRESHOLD_MONTHS` (**6 calendar months** by default) appear after
+other dated events. Each group keeps ascending start time and ID ordering.
+Durations exactly at the threshold, missing timestamps, and invalid
+negative durations are not classified as long-term. Other sort fields and
+descending date order keep their existing behavior. This grouping applies to
+both public events and favorites, before pagination, and does not remove events.
+
+Configure this shared sorting rule in the backend environment:
+
+```env
+LONG_EVENT_THRESHOLD_MONTHS=6
+```
+
+The value must be a positive integer. Restart/redeploy the API after changing it,
+because settings are cached per process. It measures total event duration in
+calendar months, not elapsed time since the start or fixed 30-day periods.
+The frontend keeps using `orderBy=startTime&orderDirection=ASC`; there is no
+per-request threshold parameter.
 Unknown start times go last in both groups, with ID breaking ties. Existing
 `orderBy` and `orderDirection` parameters can override the sort. Filtering and
 sorting happen before pagination; `total` counts only the matching group.
@@ -128,6 +147,15 @@ Offset-free `startDate` and `endDate` query values are interpreted in Lithuania;
 offset-bearing values are converted to Lithuanian time before querying.
 `endDate` includes that entire Lithuanian calendar day. The timezone follows
 daylight-saving changes rather than using a fixed UTC offset or server timezone.
+Date filters match the event's active period, not just its start date. For
+example, an event starting September 11 at 17:00 and ending September 12 at 22:00
+is included by `startDate=2026-09-12&endDate=2026-09-12`. Events ending exactly at
+the window's beginning do not carry over into it. Missing end times fall back
+to midnight after the start day; unknown start times retain their existing
+inclusion in date-filtered results. `hideExpired=true` additionally removes
+events already finished at the current time, even if they overlap the selected
+day. Existing query parameters are sufficient; no frontend request changes are
+required for the new overlap matching or long-term ordering.
 The timezone-free columns cannot distinguish the two occurrences of the repeated
 autumn hour; ambiguous wall-clock times use the later, standard-time occurrence,
 consistently with PostgreSQL.
