@@ -7,10 +7,11 @@ testable without HTTP.
 from datetime import UTC, datetime
 from typing import Any, cast
 
-from sqlalchemy import ColumnElement, Select, and_, case, func, or_, select, update
+from sqlalchemy import ColumnElement, Select, and_, case, func, literal_column, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import UnaryExpression
 
+from app.core.config import get_settings
 from app.core.time import LITHUANIAN_TIME_ZONE, local_now
 from app.events.models import Event
 from app.events.schemas import EventFilters, OrderDirection
@@ -65,9 +66,21 @@ def _build_filters(
             )
         )
 
+    # Match events whose active period overlaps the requested window. An absent
+    # end time lasts until the next local midnight, as in the expiry rules.
     # Events with an unknown start time are never excluded by a date bound.
     if filters.start_date is not None:
-        clauses.append(or_(Event.start_time >= filters.start_date, Event.start_time.is_(None)))
+        effective_end = func.coalesce(
+            Event.end_time,
+            func.date_trunc("day", Event.start_time) + literal_column("INTERVAL '1 day'"),
+        )
+        clauses.append(
+            or_(
+                Event.start_time >= filters.start_date,
+                effective_end > filters.start_date,
+                Event.start_time.is_(None),
+            )
+        )
 
     if filters.end_date is not None:
         end_of_day = filters.end_date.replace(hour=23, minute=59, second=59, microsecond=999_999)
@@ -97,8 +110,19 @@ def _build_filters(
 
 
 def _apply_ordering(statement: Select[tuple[Event]], filters: EventFilters) -> Select[tuple[Event]]:
-    """Order results, grouping priceless events into predictable blocks."""
+    """Order results with duration groups for dates and price groups for prices."""
     if filters.order_by != "price":
+        if filters.order_by == "startTime" and filters.sort_direction == "ASC":
+            # Calendar months, not a fixed number of days. Unknown durations
+            # stay in the regular group; the threshold is strictly greater-than.
+            duration_limit = func.make_interval(0, get_settings().long_event_threshold_months)
+            statement = statement.order_by(
+                Event.start_time.is_(None).asc(),
+                case(
+                    (Event.end_time > Event.start_time + duration_limit, 1),
+                    else_=0,
+                ).asc()
+            )
         order = _directed(_SORTABLE[filters.order_by], filters.sort_direction)
         if filters.status is not None:
             order = order.nulls_last()

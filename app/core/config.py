@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     environment: Environment = Environment.DEVELOPMENT
     port: int = 3000
 
+    long_event_threshold_months: int = Field(default=6, ge=1)
+
     db_host: str = "localhost"
     db_port: int = 5432
     db_username: str = "postgres"
