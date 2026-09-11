@@ -70,7 +70,7 @@ class EventFilters(APIModel):
         default="startTime",
         description=(
             "Field to sort by. startTime ASC places events longer than the configured "
-            "LONG_EVENT_THRESHOLD_MONTHS (default: 6 calendar months) after other dated events, "
+            "LONG_EVENT_THRESHOLD_DAYS (default: 7 days) after other dated events, "
             "then orders each group by start time."
         ),
     )

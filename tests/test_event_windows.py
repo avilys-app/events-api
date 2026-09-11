@@ -64,7 +64,7 @@ async def test_today_includes_ongoing_events_before_pagination(
         "orderDirection": "ASC",
         "pageSize": "2",
     }
-    titles = []
+    titles: list[str] = []
     for page in range(1, 4):
         response = await client.get(endpoint, params={**params, "page": page}, headers=auth_headers)
         assert response.status_code == 200, response.text
@@ -142,7 +142,7 @@ async def test_long_events_follow_regular_events_across_pages(
         session.add(make_event(title="Not saved", start_time=datetime(2026, 9, 12, 17)))
     await session.commit()
 
-    titles = []
+    titles: list[str] = []
     for page in range(1, 4):
         response = await client.get(
             endpoint,
@@ -162,26 +162,22 @@ async def test_long_events_follow_regular_events_across_pages(
 
 
 @pytest.mark.parametrize(
-    ("months", "start", "threshold_end"),
+    ("days", "start", "threshold_end"),
     [
-        (6, datetime(2026, 1, 1, 12), datetime(2026, 7, 1, 12)),
-        (6, datetime(2026, 8, 31, 12), datetime(2027, 2, 28, 12)),
-        (6, datetime(2023, 8, 31, 12), datetime(2024, 2, 29, 12)),
-        (3, datetime(2026, 1, 31, 12), datetime(2026, 4, 30, 12)),
-        (12, datetime(2024, 2, 29, 12), datetime(2025, 2, 28, 12)),
+        (7, datetime(2026, 1, 1, 12), datetime(2026, 1, 8, 12)),
+        (3, datetime(2026, 8, 31, 12), datetime(2026, 9, 3, 12)),
+        (14, datetime(2024, 2, 29, 12), datetime(2024, 3, 14, 12)),
     ],
 )
-async def test_long_term_threshold_uses_configured_calendar_months(
+async def test_long_term_threshold_uses_configured_days(
     client: AsyncClient,
     session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
-    months: int,
+    days: int,
     start: datetime,
     threshold_end: datetime,
 ) -> None:
-    settings = Settings(
-        _env_file=None, jwt_secret="test-secret", long_event_threshold_months=months
-    )
+    settings = Settings(_env_file=None, jwt_secret="test-secret", long_event_threshold_days=days)
     monkeypatch.setattr(repository, "get_settings", lambda: settings)
     session.add_all(
         [

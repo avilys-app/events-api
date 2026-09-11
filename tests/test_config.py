@@ -31,20 +31,20 @@ def test_supabase_pooler_disables_asyncpg_statement_caches() -> None:
     assert statement_name() != statement_name()
 
 
-def test_long_event_threshold_defaults_to_six_months(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("LONG_EVENT_THRESHOLD_MONTHS", raising=False)
-    assert Settings(_env_file=None, jwt_secret="test-secret").long_event_threshold_months == 6
+def test_long_event_threshold_defaults_to_seven_days(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("LONG_EVENT_THRESHOLD_DAYS", raising=False)
+    assert Settings(_env_file=None, jwt_secret="test-secret").long_event_threshold_days == 7
 
 
 def test_long_event_threshold_reads_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("LONG_EVENT_THRESHOLD_MONTHS", "3")
-    assert Settings(_env_file=None, jwt_secret="test-secret").long_event_threshold_months == 3
+    monkeypatch.setenv("LONG_EVENT_THRESHOLD_DAYS", "3")
+    assert Settings(_env_file=None, jwt_secret="test-secret").long_event_threshold_days == 3
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "1.5", "invalid"])
 def test_long_event_threshold_requires_positive_integer(
     monkeypatch: pytest.MonkeyPatch, value: str
 ) -> None:
-    monkeypatch.setenv("LONG_EVENT_THRESHOLD_MONTHS", value)
-    with pytest.raises(ValidationError, match="long_event_threshold_months"):
+    monkeypatch.setenv("LONG_EVENT_THRESHOLD_DAYS", value)
+    with pytest.raises(ValidationError, match="long_event_threshold_days"):
         Settings(_env_file=None, jwt_secret="test-secret")

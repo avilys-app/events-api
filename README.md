@@ -104,7 +104,7 @@ an event with only an end time is classified by that time.
 
 Results default to `startTime ASC` for upcoming and `startTime DESC` for past.
 When using `startTime ASC`, events whose total duration exceeds
-`LONG_EVENT_THRESHOLD_MONTHS` (**6 calendar months** by default) appear after
+`LONG_EVENT_THRESHOLD_DAYS` (**7 days** by default) appear after
 other dated events. Each group keeps ascending start time and ID ordering.
 Durations exactly at the threshold, missing timestamps, and invalid
 negative durations are not classified as long-term. Other sort fields and
@@ -114,12 +114,12 @@ both public events and favorites, before pagination, and does not remove events.
 Configure this shared sorting rule in the backend environment:
 
 ```env
-LONG_EVENT_THRESHOLD_MONTHS=6
+LONG_EVENT_THRESHOLD_DAYS=7
 ```
 
 The value must be a positive integer. Restart/redeploy the API after changing it,
 because settings are cached per process. It measures total event duration in
-calendar months, not elapsed time since the start or fixed 30-day periods.
+days, not elapsed time since the start.
 The frontend keeps using `orderBy=startTime&orderDirection=ASC`; there is no
 per-request threshold parameter.
 Unknown start times go last in both groups, with ID breaking ties. Existing

@@ -113,9 +113,9 @@ def _apply_ordering(statement: Select[tuple[Event]], filters: EventFilters) -> S
     """Order results with duration groups for dates and price groups for prices."""
     if filters.order_by != "price":
         if filters.order_by == "startTime" and filters.sort_direction == "ASC":
-            # Calendar months, not a fixed number of days. Unknown durations
-            # stay in the regular group; the threshold is strictly greater-than.
-            duration_limit = func.make_interval(0, get_settings().long_event_threshold_months)
+            # Unknown durations stay in the regular group; the threshold is
+            # strictly greater-than.
+            duration_limit = func.make_interval(0, 0, 0, get_settings().long_event_threshold_days)
             statement = statement.order_by(
                 Event.start_time.is_(None).asc(),
                 case(
